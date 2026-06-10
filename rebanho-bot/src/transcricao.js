@@ -7,6 +7,7 @@ const FormData = require('form-data')
 async function transcreverAudio(mediaUrl, accountSid, authToken) {
   const tmpPath = path.join(os.tmpdir(), `audio_${Date.now()}.ogg`)
 
+  // 1. Baixar audio do Twilio
   const response = await axios.get(mediaUrl, {
     responseType: 'arraybuffer',
     auth: { username: accountSid, password: authToken },
@@ -16,22 +17,23 @@ async function transcreverAudio(mediaUrl, accountSid, authToken) {
   fs.writeFileSync(tmpPath, response.data)
   console.log(`Audio salvo: ${tmpPath} (${response.data.byteLength} bytes)`)
 
+  // 2. Transcrever com Groq Whisper (gratuito)
   const form = new FormData()
   form.append('file', fs.createReadStream(tmpPath), {
     filename: 'audio.ogg',
     contentType: 'audio/ogg',
   })
-  form.append('model', 'whisper-1')
+  form.append('model', 'whisper-large-v3')
   form.append('language', 'pt')
   form.append('response_format', 'text')
 
   const whisperResponse = await axios.post(
-    'https://api.openai.com/v1/audio/transcriptions',
+    'https://api.groq.com/openai/v1/audio/transcriptions',
     form,
     {
       headers: {
         ...form.getHeaders(),
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       },
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
