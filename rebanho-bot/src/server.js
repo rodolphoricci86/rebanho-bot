@@ -23,14 +23,15 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 )
 
+// ─── Sessões temporárias em memória (aguardando período) ──────────────────────
+// { "whatsapp:+55...": { texto, ts } }
+const sessoesAguardando = {}
+
 function validarTwilio(req, res, next) {
   const assinatura = req.headers['x-twilio-signature']
   const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
   const valido = twilio.validateRequest(
-    process.env.TWILIO_AUTH_TOKEN,
-    assinatura,
-    url,
-    req.body
+    process.env.TWILIO_AUTH_TOKEN, assinatura, url, req.body
   )
   // if (!valido) return res.status(403).send('Forbidden')
   next()
@@ -49,28 +50,46 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
   console.log(`Mensagem de ${de} | Mídia: ${numMedia} | Tipo: ${mediaType}`)
 
   try {
+    // ── Verificar se há sessão aguardando período ──
+    if (sessoesAguardando[de]) {
+      const textoSalvo = sessoesAguardando[de].texto
+      delete sessoesAguardando[de]
+
+      // Tentar extrair mês/ano da resposta do usuário
+      const periodoTexto = (corpo || '').trim()
+      const textoCompleto = `${periodoTexto}. ${textoSalvo}`
+
+      responderWhatsApp(res, '_Entendido! Processando com o período informado..._')
+      processarTexto(de, textoCompleto).catch(err => {
+        enviarMensagem(de, `Erro ao processar: ${err.message}. Tente novamente.`)
+      })
+      return
+    }
+
+    // ── Áudio recebido ──
     if (parseInt(numMedia) > 0 && mediaType?.startsWith('audio')) {
       responderWhatsApp(res, '_Recebi seu áudio! Transcrevendo e processando os dados..._')
-      processarAudio(de, mediaUrl).catch((err) => {
+      processarAudio(de, mediaUrl).catch(err => {
         console.error('Erro:', err)
         enviarMensagem(de, `Erro ao processar: ${err.message}. Tente novamente.`)
       })
       return
     }
 
+    // ── Texto recebido ──
     if (corpo && corpo.trim().length > 20) {
       responderWhatsApp(res, '_Recebi seus dados! Processando..._')
-      processarTexto(de, corpo).catch((err) => {
+      processarTexto(de, corpo).catch(err => {
         enviarMensagem(de, `Erro ao processar: ${err.message}. Tente novamente.`)
       })
       return
     }
 
+    // ── Comandos ──
     const cmd = (corpo || '').trim().toLowerCase()
     if (cmd === 'resumo' || cmd === 'relatorio') {
       const resumo = await buscarResumoMensal(3)
-      const msg = formatarResumoRapido(resumo)
-      return responderWhatsApp(res, msg)
+      return responderWhatsApp(res, formatarResumoRapido(resumo))
     }
 
     responderWhatsApp(res,
@@ -90,6 +109,18 @@ async function processarAudio(de, mediaUrl) {
 
 async function processarTexto(de, texto) {
   const dados = await extrairDadosRebanho(texto)
+
+  // ── Mês/ano não identificado → perguntar ao usuário ──
+  if (!dados.mes || !dados.ano) {
+    sessoesAguardando[de] = { texto, ts: Date.now() }
+    // Limpar sessão após 10 minutos
+    setTimeout(() => { delete sessoesAguardando[de] }, 10 * 60 * 1000)
+
+    await enviarMensagem(de,
+      `_Não consegui identificar o período nos dados enviados._\n\n📅 *Para qual mês e ano é este mapa?*\n\nResponda com o mês e ano, por exemplo:\n- *março de 2026*\n- *03/2026*`)
+    return
+  }
+
   const salvo = await salvarRebanho(dados, texto, de)
   console.log(`Salvo: ${salvo.mes}/${salvo.ano}, ${salvo.totalCategorias} categorias`)
   const resumo = gerarResumoWhatsApp(dados)
@@ -119,8 +150,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok', ts: new Date() }))
 // ─── API: resumo mensal ───────────────────────────────────────────────────────
 app.get('/api/resumo', async (req, res) => {
   try {
-    const limite = parseInt(req.query.meses || '12')
-    const data = await buscarResumoMensal(limite)
+    const data = await buscarResumoMensal(parseInt(req.query.meses || '12'))
     res.json({ ok: true, data })
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message })
@@ -134,18 +164,14 @@ app.get('/api/categorias', async (req, res) => {
     if (!mes || !ano) return res.status(400).json({ ok: false, error: 'mes e ano obrigatórios' })
 
     const { data: mensal } = await supabase
-      .from('rebanho_mensal')
-      .select('id')
-      .eq('mes', mes).eq('ano', ano).eq('fazenda', fazenda)
-      .single()
+      .from('rebanho_mensal').select('id')
+      .eq('mes', mes).eq('ano', ano).eq('fazenda', fazenda).single()
 
     if (!mensal) return res.json({ ok: true, data: [] })
 
     const { data, error } = await supabase
-      .from('rebanho_categoria')
-      .select('*')
-      .eq('rebanho_id', mensal.id)
-      .order('item')
+      .from('rebanho_categoria').select('*')
+      .eq('rebanho_id', mensal.id).order('item')
 
     if (error) throw new Error(error.message)
     res.json({ ok: true, data })
@@ -155,6 +181,4 @@ app.get('/api/categorias', async (req, res) => {
 })
 
 const PORT = process.env.PORT || 3000
-app.listen(PORT, () => {
-  console.log(`Servidor na porta ${PORT}`)
-})
+app.listen(PORT, () => console.log(`Servidor na porta ${PORT}`))
