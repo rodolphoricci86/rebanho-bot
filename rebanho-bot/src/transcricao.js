@@ -1,11 +1,8 @@
-const OpenAI = require('openai')
 const axios = require('axios')
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
-const { toFile } = require('openai')
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const FormData = require('form-data')
 
 async function transcreverAudio(mediaUrl, accountSid, authToken) {
   const tmpPath = path.join(os.tmpdir(), `audio_${Date.now()}.ogg`)
@@ -19,18 +16,32 @@ async function transcreverAudio(mediaUrl, accountSid, authToken) {
   fs.writeFileSync(tmpPath, response.data)
   console.log(`Audio salvo: ${tmpPath} (${response.data.byteLength} bytes)`)
 
-  const audioBuffer = fs.readFileSync(tmpPath)
-  const audioFile = await toFile(audioBuffer, 'audio.ogg', { type: 'audio/ogg' })
-
-  const transcricao = await openai.audio.transcriptions.create({
-    file: audioFile,
-    model: 'whisper-1',
-    language: 'pt',
-    response_format: 'text',
+  const form = new FormData()
+  form.append('file', fs.createReadStream(tmpPath), {
+    filename: 'audio.ogg',
+    contentType: 'audio/ogg',
   })
+  form.append('model', 'whisper-1')
+  form.append('language', 'pt')
+  form.append('response_format', 'text')
+
+  const whisperResponse = await axios.post(
+    'https://api.openai.com/v1/audio/transcriptions',
+    form,
+    {
+      headers: {
+        ...form.getHeaders(),
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      timeout: 60000,
+    }
+  )
 
   try { fs.unlinkSync(tmpPath) } catch (_) {}
-  return transcricao
+  console.log('Transcricao:', String(whisperResponse.data).substring(0, 100))
+  return whisperResponse.data
 }
 
 module.exports = { transcreverAudio }
