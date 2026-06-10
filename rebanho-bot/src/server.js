@@ -3,6 +3,7 @@ require('dotenv').config()
 const express = require('express')
 const twilio = require('twilio')
 const path = require('path')
+const { createClient } = require('@supabase/supabase-js')
 const { transcreverAudio } = require('./transcricao')
 const { extrairDadosRebanho, gerarResumoWhatsApp } = require('./extracao')
 const { salvarRebanho, buscarResumoMensal } = require('./supabase')
@@ -17,6 +18,11 @@ const twilioClient = twilio(
   process.env.TWILIO_AUTH_TOKEN
 )
 
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+)
+
 function validarTwilio(req, res, next) {
   const assinatura = req.headers['x-twilio-signature']
   const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
@@ -26,7 +32,7 @@ function validarTwilio(req, res, next) {
     url,
     req.body
   )
-    // if (!valido) return res.status(403).send('Forbidden')
+  // if (!valido) return res.status(403).send('Forbidden')
   next()
 }
 
@@ -63,11 +69,12 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
     const cmd = (corpo || '').trim().toLowerCase()
     if (cmd === 'resumo' || cmd === 'relatorio') {
       const resumo = await buscarResumoMensal(3)
-      return responderWhatsApp(res, formatarResumoRapido(resumo))
+      const msg = formatarResumoRapido(resumo)
+      return responderWhatsApp(res, msg)
     }
 
     responderWhatsApp(res,
-      `*Olá! Sou o assistente de rebanho do Grupo Ricci.*\n\nEnvie um *áudio* com os dados do mapa de rebanho do mês.\n\nComandos:\n- *resumo* — últimos 3 meses`)
+      `*Olá! Sou o assistente de rebanho do Grupo Ricci.* 🐄\n\nEnvie um *áudio* com os dados do mapa de rebanho do mês.\n\nComandos:\n- *resumo* — últimos 3 meses`)
   } catch (err) {
     console.error('Erro webhook:', err)
     responderWhatsApp(res, 'Ocorreu um erro inesperado. Tente novamente.')
@@ -77,6 +84,7 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
 async function processarAudio(de, mediaUrl) {
   const texto = await transcreverAudio(mediaUrl,
     process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+  console.log('Transcricao:', texto.substring(0, 150))
   await processarTexto(de, texto)
 }
 
@@ -104,11 +112,42 @@ function formatarResumoRapido(meses) {
   return `*Resumo dos últimos meses:*\n\n${linhas.join('\n')}`
 }
 
+// ─── Dashboard ────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'dashboard.html')))
 app.get('/health', (req, res) => res.json({ status: 'ok', ts: new Date() }))
+
+// ─── API: resumo mensal ───────────────────────────────────────────────────────
 app.get('/api/resumo', async (req, res) => {
   try {
-    const data = await buscarResumoMensal(parseInt(req.query.meses || '12'))
+    const limite = parseInt(req.query.meses || '12')
+    const data = await buscarResumoMensal(limite)
+    res.json({ ok: true, data })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+// ─── API: categorias detalhadas por mês ──────────────────────────────────────
+app.get('/api/categorias', async (req, res) => {
+  try {
+    const { mes, ano, fazenda = 'Grupo Ricci' } = req.query
+    if (!mes || !ano) return res.status(400).json({ ok: false, error: 'mes e ano obrigatórios' })
+
+    const { data: mensal } = await supabase
+      .from('rebanho_mensal')
+      .select('id')
+      .eq('mes', mes).eq('ano', ano).eq('fazenda', fazenda)
+      .single()
+
+    if (!mensal) return res.json({ ok: true, data: [] })
+
+    const { data, error } = await supabase
+      .from('rebanho_categoria')
+      .select('*')
+      .eq('rebanho_id', mensal.id)
+      .order('item')
+
+    if (error) throw new Error(error.message)
     res.json({ ok: true, data })
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message })
@@ -116,4 +155,6 @@ app.get('/api/resumo', async (req, res) => {
 })
 
 const PORT = process.env.PORT || 3000
-app.listen(PORT, () => console.log(`Servidor na porta ${PORT}`))
+app.listen(PORT, () => {
+  console.log(`Servidor na porta ${PORT}`)
+})
