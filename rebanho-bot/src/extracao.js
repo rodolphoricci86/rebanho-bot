@@ -1,5 +1,4 @@
-const OpenAI = require('openai')
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const axios = require('axios')
 
 const SYSTEM_PROMPT = `Você é um assistente especializado em pecuária bovina.
 Receberá um texto transcrito de um áudio enviado por um fazendeiro com dados do rebanho mensal.
@@ -33,7 +32,7 @@ Se um campo não for mencionado, use 0. Se mês/ano não forem mencionados, use 
   "observacoes": "<observações livres mencionadas ou null>"
 }
 
-Categorias padrão:
+Categorias padrão do mapa de rebanho:
 1.1 Bezerros 0-8 meses (M), 1.2 Bezerros 8-12 meses (M), 1.3 Garrotes 13-24 meses (M),
 1.5 Bois 25-36 meses (M), 1.7 Touros PO acima 25 meses (M),
 2.1 Bezerras 0-2 meses (F), 2.2 Bezerras 3-8 meses (F), 2.3 Bezerras 9-12 meses (F),
@@ -41,19 +40,29 @@ Categorias padrão:
 2.7 Vacas paridas acima 25 meses (F)`
 
 async function extrairDadosRebanho(texto) {
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: `Texto transcrito:\n\n${texto}` },
-    ],
-    temperature: 0.1,
-    response_format: { type: 'json_object' },
-  })
+  const response = await axios.post(
+    'https://api.groq.com/openai/v1/chat/completions',
+    {
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: `Texto transcrito:\n\n${texto}` },
+      ],
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 30000,
+    }
+  )
 
-  const dados = JSON.parse(completion.choices[0].message.content)
+  const dados = JSON.parse(response.data.choices[0].message.content)
 
-  dados.categorias = dados.categorias.map((cat) => {
+  dados.categorias = (dados.categorias || []).map((cat) => {
     const entrada_total =
       (cat.entrada_compra || 0) + (cat.entrada_mudanca_cat || 0) +
       (cat.entrada_desmama || 0) + (cat.entrada_nascimento || 0) +
