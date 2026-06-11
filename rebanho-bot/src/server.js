@@ -305,15 +305,26 @@ async function tratarRespostaSessao(de, textoResposta, dados, etapa) {
   }
 
   if (etapa === 'confirmacao') {
-    if (['sim','s','yes','ok','confirmo','correto'].includes(resposta)) {
+    if (['sim','s','yes','ok','confirmo','correto','pode salvar','salvar'].includes(resposta)) {
       limparSessao(de)
       await finalizarSalvamento(de, dados)
-    } else if (['não','nao','n','errado'].includes(resposta)) {
+      return
+    }
+    if (['não','nao','n','errado','cancela','cancelar'].includes(resposta)) {
       limparSessao(de)
       await enviarMensagem(de, '_Ok! Envie um novo áudio com os dados corrigidos._')
-    } else {
-      await enviarMensagem(de, '_Responda *sim* para salvar ou *não* para corrigir._')
+      return
     }
+    // Resposta longa = correção! Extrair e mesclar
+    if (resposta.length > 10) {
+      await enviarMensagem(de, '_Aplicando correção..._')
+      const complemento = await extrairComplemento(textoResposta, dados, 'movimentacoes')
+      const dadosCorrigidos = mesclarDados(dados, complemento)
+      setSessao(de, dadosCorrigidos, 'confirmacao')
+      await enviarMensagem(de, gerarResumoConfirmacao(dadosCorrigidos))
+      return
+    }
+    await enviarMensagem(de, '_Responda *sim* para salvar, *não* para cancelar, ou fale a correção (ex: "morreram três")._')
     return
   }
 
@@ -433,12 +444,25 @@ async function finalizarSalvamento(de, dados) {
 }
 
 async function enviarMensagem(para, mensagem) {
-  return twilioClient.messages.create({
-    from: process.env.TWILIO_WHATSAPP_NUMBER,
-    to: para,
-    body: mensagem,
-  })
+  try {
+    return await twilioClient.messages.create({
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: para,
+      body: mensagem,
+    })
+  } catch (err) {
+    console.error('Erro Twilio ao enviar:', err.message)
+    return null
+  }
 }
+
+// Segurança global: nunca derrubar o processo por promise rejeitada
+process.on('unhandledRejection', (err) => {
+  console.error('UnhandledRejection:', err?.message || err)
+})
+process.on('uncaughtException', (err) => {
+  console.error('UncaughtException:', err?.message || err)
+})
 
 function formatarResumoRapido(meses) {
   if (!meses?.length) return 'Nenhum dado encontrado ainda.'
