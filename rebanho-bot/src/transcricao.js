@@ -17,23 +17,23 @@ async function transcreverAudio(mediaUrl, accountSid, authToken) {
   fs.writeFileSync(tmpPath, response.data)
   console.log(`Audio salvo: ${tmpPath} (${response.data.byteLength} bytes)`)
 
-  // 2. Transcrever com Groq Whisper (gratuito)
+  // 2. Transcrever com OpenAI Whisper
   const form = new FormData()
   form.append('file', fs.createReadStream(tmpPath), {
     filename: 'audio.ogg',
     contentType: 'audio/ogg',
   })
-  form.append('model', 'whisper-large-v3')
+  form.append('model', 'whisper-1')
   form.append('language', 'pt')
   form.append('response_format', 'text')
 
   const whisperResponse = await axios.post(
-    'https://api.groq.com/openai/v1/audio/transcriptions',
+    'https://api.openai.com/v1/audio/transcriptions',
     form,
     {
       headers: {
         ...form.getHeaders(),
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
