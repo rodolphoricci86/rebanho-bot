@@ -5,7 +5,7 @@ const twilio = require('twilio')
 const path = require('path')
 const { createClient } = require('@supabase/supabase-js')
 const { transcreverAudio } = require('./transcricao')
-const { extrairDadosRebanho, gerarResumoWhatsApp } = require('./extracao')
+const { extrairDadosRebanho, extrairComplemento, gerarResumoWhatsApp } = require('./extracao')
 const { salvarRebanho, buscarResumoMensal, buscarResumoPorLote } = require('./supabase')
 
 const app = express()
@@ -23,76 +23,172 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 )
 
-// ─── Sessões em memória ───────────────────────────────────────────────────────
-// Aguardando período:  { texto, dados, ts }
-// Aguardando lote:     { texto, dados, ts }
-const sessoesPeriodo = {}
-const sessoesLote    = {}
+// ─── Sessões multi-etapa ──────────────────────────────────────────────────────
+// Estrutura: { dados, etapa, ts }
+// Etapas: 'periodo' | 'lote' | 'movimentacoes' | 'confirmacao'
+const sessoes = {}
+const TTL = 15 * 60 * 1000
 
-const SESSION_TTL = 10 * 60 * 1000 // 10 minutos
-
-function limparSessao(mapa, chave) {
-  setTimeout(() => { delete mapa[chave] }, SESSION_TTL)
+function setSessao(de, dados, etapa) {
+  sessoes[de] = { dados, etapa, ts: Date.now() }
+  setTimeout(() => { delete sessoes[de] }, TTL)
 }
 
-function validarTwilio(req, res, next) {
-  const assinatura = req.headers['x-twilio-signature']
-  const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`
-  const valido = twilio.validateRequest(
-    process.env.TWILIO_AUTH_TOKEN, assinatura, url, req.body
+function limparSessao(de) { delete sessoes[de] }
+
+// ─── Análise do que está faltando ─────────────────────────────────────────────
+function analisarFaltando(dados) {
+  const faltando = []
+
+  if (!dados.mes || !dados.ano) faltando.push('periodo')
+
+  const temCategorias = dados.categorias && dados.categorias.length > 0
+  const temExistencia = temCategorias && dados.categorias.some(c => c.existencia_atual > 0)
+  if (!temExistencia) faltando.push('existencia')
+
+  const temMovim = temCategorias && dados.categorias.some(c =>
+    (c.entrada_nascimento || 0) + (c.saida_morte || 0) +
+    (c.saida_venda || 0) + (c.entrada_compra || 0) > 0
   )
-  // if (!valido) return res.status(403).send('Forbidden')
+  if (temCategorias && !temMovim) faltando.push('movimentacoes')
+
+  return faltando
+}
+
+// ─── Gerador de perguntas ─────────────────────────────────────────────────────
+function gerarPergunta(etapa, dados) {
+  const meses = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+    'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+
+  if (etapa === 'periodo') {
+    return `_Não identifiquei o período nos dados._\n\n📅 *Para qual mês e ano é este mapa?*\nEx: *março de 2026*`
+  }
+
+  if (etapa === 'existencia') {
+    return `_Não identifiquei a existência atual dos animais._\n\n🐄 *Quantas cabeças tem ao todo?*\nOu envie um novo áudio com os totais por categoria.`
+  }
+
+  if (etapa === 'movimentacoes') {
+    const periodo = dados.mes ? `${meses[dados.mes]}/${dados.ano}` : 'este mês'
+    const total = dados.categorias?.reduce((s, c) => s + (c.existencia_atual || 0), 0) || 0
+    return `✅ *Captei ${total} cabeças em ${periodo}.*\n\n📋 *Houve movimentações neste mês?*\nNascimentos, mortes, compras ou vendas?\n\nResponda com os números ou *não* se não houver.`
+  }
+
+  return ''
+}
+
+// ─── Resumo para confirmação ──────────────────────────────────────────────────
+function gerarResumoConfirmacao(dados) {
+  const meses = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+    'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+
+  const total = dados.categorias?.reduce((s, c) => s + (c.existencia_atual || 0), 0) || 0
+  const machos = dados.categorias?.filter(c => c.sexo==='M').reduce((s,c) => s+(c.existencia_atual||0), 0) || 0
+  const femeas = dados.categorias?.filter(c => c.sexo==='F').reduce((s,c) => s+(c.existencia_atual||0), 0) || 0
+  const nasc  = dados.categorias?.reduce((s,c) => s+(c.entrada_nascimento||0), 0) || 0
+  const mortes = dados.categorias?.reduce((s,c) => s+(c.saida_morte||0), 0) || 0
+  const vendas = dados.categorias?.reduce((s,c) => s+(c.saida_venda||0), 0) || 0
+  const compras = dados.categorias?.reduce((s,c) => s+(c.entrada_compra||0), 0) || 0
+  const periodo = dados.mes ? `${meses[dados.mes]}/${dados.ano}` : '—'
+  const lote = dados.lote_nome ? `\n*Lote:* ${dados.lote_nome}` : ''
+
+  const linhasCat = (dados.categorias || [])
+    .filter(c => c.existencia_atual > 0)
+    .map(c => `  • ${c.item} ${c.discriminacao}: ${c.existencia_atual}`)
+    .join('\n')
+
+  return `📋 *Confira os dados antes de salvar:*
+
+*Período:* ${periodo}${lote}
+*Total:* ${total} cabeças (M: ${machos} | F: ${femeas})
+
+*Por categoria:*
+${linhasCat || '  (nenhuma)'}
+
+*Movimentações:*
+  Nascimentos: ${nasc} | Compras: ${compras}
+  Vendas: ${vendas} | Mortes: ${mortes}
+
+Está correto? Responda *sim* para salvar ou *não* para corrigir.`
+}
+
+// ─── Webhook ──────────────────────────────────────────────────────────────────
+function validarTwilio(req, res, next) {
+  // if (!twilio.validateRequest(...)) return res.status(403).send('Forbidden')
   next()
 }
 
-function responderWhatsApp(res, mensagem) {
+function responderWhatsApp(res, msg) {
   const twiml = new twilio.twiml.MessagingResponse()
-  twiml.message(mensagem)
+  twiml.message(msg)
   res.type('text/xml').send(twiml.toString())
 }
 
-// ─── Webhook principal ────────────────────────────────────────────────────────
 app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
   const { From: de, Body: corpo, NumMedia: numMedia,
     MediaUrl0: mediaUrl, MediaContentType0: mediaType } = req.body
 
-  console.log(`Msg de ${de} | Mídia: ${numMedia} | Tipo: ${mediaType}`)
+  console.log(`Msg ${de} | mídia:${numMedia} | tipo:${mediaType}`)
 
   try {
-    // ── Sessão aguardando PERÍODO ──
-    if (sessoesPeriodo[de]) {
-      const { texto } = sessoesPeriodo[de]
-      delete sessoesPeriodo[de]
-      responderWhatsApp(res, '_Entendido! Processando com o período informado..._')
-      processarTexto(de, `${(corpo||'').trim()}. ${texto}`).catch(err =>
+    const sessao = sessoes[de]
+
+    // ── Sessão ativa: processar resposta ──
+    if (sessao) {
+      const resposta = (corpo || '').trim().toLowerCase()
+      const { dados, etapa } = sessao
+
+      // CONFIRMAÇÃO
+      if (etapa === 'confirmacao') {
+        if (resposta === 'sim' || resposta === 's' || resposta === 'yes') {
+          limparSessao(de)
+          responderWhatsApp(res, '_Salvando..._')
+          finalizarSalvamento(de, dados).catch(err =>
+            enviarMensagem(de, `Erro ao salvar: ${err.message}`))
+        } else if (resposta === 'não' || resposta === 'nao' || resposta === 'n') {
+          limparSessao(de)
+          responderWhatsApp(res, '_Ok! Envie um novo áudio com os dados corrigidos._')
+        } else {
+          responderWhatsApp(res, `_Responda *sim* para salvar ou *não* para corrigir._`)
+        }
+        return
+      }
+
+      // MOVIMENTAÇÕES: aceitar "não" ou processar resposta
+      if (etapa === 'movimentacoes') {
+        if (resposta === 'não' || resposta === 'nao' || resposta === 'n' || resposta === 'nenhuma') {
+          // Sem movimentações — ir para confirmação
+          setSessao(de, dados, 'confirmacao')
+          responderWhatsApp(res, gerarResumoConfirmacao(dados))
+        } else {
+          // Tentar extrair movimentações do texto/áudio
+          responderWhatsApp(res, '_Processando movimentações..._')
+          processarComplemento(de, corpo, dados, 'movimentacoes').catch(err =>
+            enviarMensagem(de, `Erro: ${err.message}`))
+        }
+        return
+      }
+
+      // PERÍODO, EXISTÊNCIA, LOTE: sempre tentar extrair do texto
+      responderWhatsApp(res, '_Processando..._')
+      processarComplemento(de, corpo, dados, etapa).catch(err =>
         enviarMensagem(de, `Erro: ${err.message}`))
       return
     }
 
-    // ── Sessão aguardando LOTE ──
-    if (sessoesLote[de]) {
-      const { dados } = sessoesLote[de]
-      delete sessoesLote[de]
-      dados.lote_nome = (corpo || '').trim()
-      responderWhatsApp(res, `_Lote "${dados.lote_nome}" registrado! Salvando..._`)
-      finalizarSalvamento(de, dados).catch(err =>
-        enviarMensagem(de, `Erro: ${err.message}`))
-      return
-    }
-
-    // ── Áudio ──
+    // ── Áudio novo ──
     if (parseInt(numMedia) > 0 && mediaType?.startsWith('audio')) {
       responderWhatsApp(res, '_Recebi seu áudio! Transcrevendo e processando..._')
       processarAudio(de, mediaUrl).catch(err => {
-        console.error('Erro:', err)
-        enviarMensagem(de, `Erro ao processar: ${err.message}. Tente novamente.`)
+        console.error('Erro áudio:', err)
+        enviarMensagem(de, `Erro: ${err.message}. Tente novamente.`)
       })
       return
     }
 
-    // ── Texto longo ──
+    // ── Texto longo novo ──
     if (corpo && corpo.trim().length > 20) {
-      responderWhatsApp(res, '_Processando seus dados..._')
+      responderWhatsApp(res, '_Processando..._')
       processarTexto(de, corpo).catch(err =>
         enviarMensagem(de, `Erro: ${err.message}`))
       return
@@ -101,23 +197,27 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
     // ── Comandos ──
     const cmd = (corpo || '').trim().toLowerCase()
     if (cmd === 'resumo') {
-      const resumo = await buscarResumoMensal(3)
-      return responderWhatsApp(res, formatarResumoRapido(resumo))
+      const r = await buscarResumoMensal(3)
+      return responderWhatsApp(res, formatarResumoRapido(r))
     }
     if (cmd === 'lotes') {
-      const lotes = await buscarResumoPorLote()
-      return responderWhatsApp(res, formatarLotes(lotes))
+      const l = await buscarResumoPorLote()
+      return responderWhatsApp(res, formatarLotes(l))
+    }
+    if (cmd === 'cancelar' || cmd === 'cancel') {
+      limparSessao(de)
+      return responderWhatsApp(res, '_Operação cancelada._')
     }
 
     responderWhatsApp(res,
-      `*Olá! Sou o assistente de rebanho do Grupo Ricci.* 🐄\n\nEnvie um *áudio* com os dados do mapa de rebanho.\n\nComandos:\n- *resumo* — últimos 3 meses\n- *lotes* — resumo por lote`)
+      `*Olá! Sou o assistente de rebanho do Grupo Ricci.* 🐄\n\nEnvie um *áudio* com os dados do mapa de rebanho.\n\nComandos:\n- *resumo* — últimos 3 meses\n- *lotes* — resumo por lote\n- *cancelar* — cancela operação em andamento`)
   } catch (err) {
     console.error('Erro webhook:', err)
     responderWhatsApp(res, 'Erro inesperado. Tente novamente.')
   }
 })
 
-// ─── Processamento ────────────────────────────────────────────────────────────
+// ─── Processamento principal ──────────────────────────────────────────────────
 async function processarAudio(de, mediaUrl) {
   const texto = await transcreverAudio(mediaUrl,
     process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -127,36 +227,92 @@ async function processarAudio(de, mediaUrl) {
 
 async function processarTexto(de, texto) {
   const dados = await extrairDadosRebanho(texto)
-
-  // Sem período → perguntar
-  if (!dados.mes || !dados.ano) {
-    sessoesPeriodo[de] = { texto, ts: Date.now() }
-    limparSessao(sessoesPeriodo, de)
-    await enviarMensagem(de,
-      `_Não identifiquei o período nos dados._\n\n📅 *Para qual mês e ano é este mapa?*\n\nEx: *março de 2026* ou *03/2026*`)
-    return
-  }
-
-  await finalizarSalvamento(de, dados)
+  await avancarFluxo(de, dados)
 }
 
-async function finalizarSalvamento(de, dados) {
-  // Sem lote → usar "Geral" automaticamente (não interrompe o fluxo)
-  // Se quiser perguntar o lote, descomente o bloco abaixo:
-  /*
-  if (!dados.lote_nome) {
-    sessoesLote[de] = { dados, ts: Date.now() }
-    limparSessao(sessoesLote, de)
-    await enviarMensagem(de,
-      `_Dados recebidos! Mas não identifiquei o lote._\n\n🐄 *Qual o lote ou pasto desses animais?*\n\nEx: *Pasto Norte*, *Lote A*, *Curral 2*\n\nOu responda *Geral* para usar o lote padrão.`)
+// ─── Processar complemento (resposta a uma pergunta) ─────────────────────────
+async function processarComplemento(de, resposta, dadosAtuais, etapa) {
+  const complemento = await extrairComplemento(resposta, dadosAtuais, etapa)
+  const dadosMerge = mesclarDados(dadosAtuais, complemento)
+  await avancarFluxo(de, dadosMerge)
+}
+
+// ─── Avançar no fluxo verificando o que falta ────────────────────────────────
+async function avancarFluxo(de, dados) {
+  const faltando = analisarFaltando(dados)
+
+  // Verificar campos obrigatórios em ordem
+  for (const campo of ['periodo', 'existencia']) {
+    if (faltando.includes(campo)) {
+      setSessao(de, dados, campo)
+      await enviarMensagem(de, gerarPergunta(campo, dados))
+      return
+    }
+  }
+
+  // Verificar movimentações (opcional mas importante)
+  if (faltando.includes('movimentacoes')) {
+    setSessao(de, dados, 'movimentacoes')
+    await enviarMensagem(de, gerarPergunta('movimentacoes', dados))
     return
   }
-  */
 
+  // Tudo ok — ir para confirmação
+  setSessao(de, dados, 'confirmacao')
+  await enviarMensagem(de, gerarResumoConfirmacao(dados))
+}
+
+// ─── Mesclar dados extraídos ──────────────────────────────────────────────────
+function mesclarDados(base, complemento) {
+  const merged = { ...base }
+
+  if (complemento.mes && !base.mes) merged.mes = complemento.mes
+  if (complemento.ano && !base.ano) merged.ano = complemento.ano
+  if (complemento.lote_nome && !base.lote_nome) merged.lote_nome = complemento.lote_nome
+  if (complemento.lote_pasto && !base.lote_pasto) merged.lote_pasto = complemento.lote_pasto
+
+  // Mesclar categorias
+  const catMap = {}
+  ;(base.categorias || []).forEach(c => { catMap[c.item] = { ...c } })
+
+  ;(complemento.categorias || []).forEach(c => {
+    if (catMap[c.item]) {
+      // Atualizar campos que vieram zerados
+      const campos = ['existencia_atual','existencia_anterior','entrada_nascimento',
+        'entrada_compra','saida_morte','saida_venda','saida_desmama',
+        'entrada_desmama','entrada_transferencia','saida_transferencia']
+      campos.forEach(f => {
+        if ((catMap[c.item][f] || 0) === 0 && (c[f] || 0) > 0) {
+          catMap[c.item][f] = c[f]
+        }
+      })
+    } else {
+      catMap[c.item] = { ...c }
+    }
+  })
+
+  merged.categorias = Object.values(catMap)
+
+  // Recalcular totais
+  merged.categorias = merged.categorias.map(cat => {
+    const et = (cat.entrada_compra||0)+(cat.entrada_mudanca_cat||0)+
+               (cat.entrada_desmama||0)+(cat.entrada_nascimento||0)+(cat.entrada_transferencia||0)
+    const st = (cat.saida_abate||0)+(cat.saida_venda||0)+(cat.saida_morte||0)+
+               (cat.saida_desmama||0)+(cat.saida_mudanca_cat||0)+(cat.saida_transferencia||0)
+    const ea = Math.max(0, cat.existencia_atual || (cat.existencia_anterior||0)+et-st)
+    return { ...cat, entrada_total: et, saida_total: st, existencia_atual: ea,
+             indice_mortalidade: ea > 0 ? (cat.saida_morte||0)/ea : 0 }
+  })
+
+  return merged
+}
+
+// ─── Salvar após confirmação ──────────────────────────────────────────────────
+async function finalizarSalvamento(de, dados) {
   const salvo = await salvarRebanho(dados, '', de)
-  console.log(`Salvo: ${salvo.mes}/${salvo.ano} | lote: ${dados.lote_nome || 'Geral'} | cats: ${salvo.totalCategorias}`)
   const resumo = gerarResumoWhatsApp(dados)
   await enviarMensagem(de, resumo)
+  console.log(`Salvo: ${salvo.mes}/${salvo.ano} | ${salvo.totalCategorias} cats`)
 }
 
 async function enviarMensagem(para, mensagem) {
@@ -170,16 +326,15 @@ async function enviarMensagem(para, mensagem) {
 function formatarResumoRapido(meses) {
   if (!meses?.length) return 'Nenhum dado encontrado ainda.'
   const n = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
-  return `*Resumo dos últimos meses:*\n\n` +
+  return '*Resumo dos últimos meses:*\n\n' +
     meses.map(m => `*${n[m.mes]}/${m.ano}:* ${Number(m.total_rebanho).toLocaleString('pt-BR')} cab. | Nasc: ${m.total_nascimentos} | Mort: ${m.mortalidade_pct}%`).join('\n')
 }
 
 function formatarLotes(lotes) {
   if (!lotes?.length) return 'Nenhum lote cadastrado ainda.'
-  const linhas = lotes.map(l =>
-    `*${l.lote_nome}* (${l.finalidade || 'misto'})\n  ${l.total_ativo} ativos | ${l.machos}M ${l.femeas}F | Mort: ${l.mortalidade_pct || 0}%${l.ocupacao_pct ? ' | Ocup: ' + l.ocupacao_pct + '%' : ''}`
-  )
-  return `*Resumo por Lote:*\n\n` + linhas.join('\n\n')
+  return '*Resumo por Lote:*\n\n' + lotes.map(l =>
+    `*${l.lote_nome}*\n  ${l.total_ativo} ativos | ${l.machos}M ${l.femeas}F | Mort: ${l.mortalidade_pct||0}%`
+  ).join('\n\n')
 }
 
 // ─── APIs ─────────────────────────────────────────────────────────────────────
@@ -188,20 +343,19 @@ app.get('/health', (req, res) => res.json({ status: 'ok', ts: new Date() }))
 
 app.get('/api/resumo', async (req, res) => {
   try {
-    const data = await buscarResumoMensal(parseInt(req.query.meses || '12'))
-    res.json({ ok: true, data })
+    res.json({ ok: true, data: await buscarResumoMensal(parseInt(req.query.meses||'12')) })
   } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
 app.get('/api/categorias', async (req, res) => {
   try {
-    const { mes, ano, fazenda = 'Grupo Ricci' } = req.query
-    if (!mes || !ano) return res.status(400).json({ ok: false, error: 'mes e ano obrigatórios' })
-    const { data: mensal } = await supabase
-      .from('rebanho_mensal').select('id').eq('mes', mes).eq('ano', ano).eq('fazenda', fazenda).single()
+    const { mes, ano, fazenda='Grupo Ricci' } = req.query
+    if (!mes||!ano) return res.status(400).json({ ok: false, error: 'mes e ano obrigatórios' })
+    const { data: mensal } = await supabase.from('rebanho_mensal').select('id')
+      .eq('mes',mes).eq('ano',ano).eq('fazenda',fazenda).single()
     if (!mensal) return res.json({ ok: true, data: [] })
-    const { data, error } = await supabase
-      .from('rebanho_categoria').select('*').eq('rebanho_id', mensal.id).order('item')
+    const { data, error } = await supabase.from('rebanho_categoria').select('*')
+      .eq('rebanho_id', mensal.id).order('item')
     if (error) throw new Error(error.message)
     res.json({ ok: true, data })
   } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
@@ -209,18 +363,16 @@ app.get('/api/categorias', async (req, res) => {
 
 app.get('/api/lotes', async (req, res) => {
   try {
-    const { fazenda = 'Grupo Ricci' } = req.query
-    const data = await buscarResumoPorLote(fazenda)
-    res.json({ ok: true, data })
+    res.json({ ok: true, data: await buscarResumoPorLote(req.query.fazenda||'Grupo Ricci') })
   } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
 app.get('/api/animais', async (req, res) => {
   try {
-    const { lote_id, fazenda = 'Grupo Ricci', status = 'ativo' } = req.query
-    let query = supabase.from('animais').select('*, lotes(nome)').eq('fazenda', fazenda).eq('status', status).order('brinco')
-    if (lote_id) query = query.eq('lote_id', lote_id)
-    const { data, error } = await query
+    const { lote_id, fazenda='Grupo Ricci', status='ativo' } = req.query
+    let q = supabase.from('animais').select('*, lotes(nome)').eq('fazenda',fazenda).eq('status',status).order('brinco')
+    if (lote_id) q = q.eq('lote_id', lote_id)
+    const { data, error } = await q
     if (error) throw new Error(error.message)
     res.json({ ok: true, data })
   } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
