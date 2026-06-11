@@ -373,7 +373,6 @@ async function renderTabelaCat(d) {
 const cacheHistDias = {}
 
 function renderHistorico(dados) {
-  // Agrupar dados por mes/ano (podem ter múltiplos dias)
   const mesesMap = {}
   dados.forEach(d => {
     const key = d.ano + '-' + d.mes
@@ -383,35 +382,48 @@ function renderHistorico(dados) {
   const meses = Object.values(mesesMap).sort((a,b) => b.ano - a.ano || b.mes - a.mes)
 
   const linhas = meses.map(m => {
-    const total = m.registros.reduce((s,r) => s + Number(r.total_rebanho||0), 0)
+    const total  = m.registros.reduce((s,r) => s + Number(r.total_rebanho||0), 0)
     const machos = m.registros.reduce((s,r) => s + Number(r.total_machos||0), 0)
     const femeas = m.registros.reduce((s,r) => s + Number(r.total_femeas||0), 0)
-    const nasc = m.registros.reduce((s,r) => s + Number(r.total_nascimentos||0), 0)
-    const comp = m.registros.reduce((s,r) => s + Number(r.total_compras||0), 0)
-    const vend = m.registros.reduce((s,r) => s + Number(r.total_vendas||0), 0)
-    const mort = m.registros.reduce((s,r) => s + Number(r.total_mortes||0), 0)
+    const nasc   = m.registros.reduce((s,r) => s + Number(r.total_nascimentos||0), 0)
+    const comp   = m.registros.reduce((s,r) => s + Number(r.total_compras||0), 0)
+    const vend   = m.registros.reduce((s,r) => s + Number(r.total_vendas||0), 0)
+    const mort   = m.registros.reduce((s,r) => s + Number(r.total_mortes||0), 0)
     const mortPct = total > 0 ? (mort/total*100).toFixed(3) : '0.000'
-    const key = m.ano + '-' + m.mes
+    const key    = m.ano + '-' + m.mes
     const periodo = MESES_FULL[m.mes] + '/' + m.ano
-    return '<tr class="hist-mes-row" onclick="toggleHistDias('' + key + '',' + m.mes + ',' + m.ano + ')" id="mes-row-' + key + '">' +
-      '<td><strong>' + periodo + '</strong></td>' +
-      '<td>' + total.toLocaleString('pt-BR') + '</td>' +
-      '<td>' + machos.toLocaleString('pt-BR') + '</td>' +
-      '<td>' + femeas.toLocaleString('pt-BR') + '</td>' +
-      '<td>' + nasc + '</td>' +
-      '<td>' + comp + '</td>' +
-      '<td>' + vend + '</td>' +
-      '<td>' + mort + '</td>' +
-      '<td class="' + (parseFloat(mortPct)>1?'mort-high':'mort-ok') + '">' + mortPct + '%</td>' +
-      '</tr>' +
-      '<tr class="hist-dia-row" id="dias-row-' + key + '"><td colspan="9"><div id="dias-inner-' + key + '" style="padding:4px 0"><em class="sem-dias">Clique para carregar dias...</em></div></td></tr>'
+    const mortCls = parseFloat(mortPct) > 1 ? 'mort-high' : 'mort-ok'
+    return [
+      `<tr class="hist-mes-row" data-key="${key}" data-mes="${m.mes}" data-ano="${m.ano}" id="mes-row-${key}">`,
+      `  <td><strong>${periodo}</strong></td>`,
+      `  <td>${total.toLocaleString('pt-BR')}</td>`,
+      `  <td>${machos.toLocaleString('pt-BR')}</td>`,
+      `  <td>${femeas.toLocaleString('pt-BR')}</td>`,
+      `  <td>${nasc}</td><td>${comp}</td><td>${vend}</td><td>${mort}</td>`,
+      `  <td class="${mortCls}">${mortPct}%</td>`,
+      `</tr>`,
+      `<tr class="hist-dia-row" id="dias-row-${key}">`,
+      `  <td colspan="9"><div id="dias-inner-${key}" style="padding:4px 8px"><em class="sem-dias">Carregando...</em></div></td>`,
+      `</tr>`
+    ].join('')
   }).join('')
 
   document.getElementById('historico').innerHTML =
     '<div class="hist-table-header"><h2>Histórico Completo <span style="font-size:11px;color:var(--muted);font-weight:400">— clique no mês para ver os dias</span></h2></div>' +
     '<div style="overflow-x:auto"><table>' +
-    '<thead><tr><th>Período</th><th>Total</th><th>Machos</th><th>Fêmeas</th><th>Nasc.</th><th>Compras</th><th>Vendas</th><th>Mortes</th><th>Mortalidade</th></tr></thead>' +
+    '<thead><tr><th>Período</th><th>Total</th><th>Machos</th><th>Fêmeas</th>' +
+    '<th>Nasc.</th><th>Compras</th><th>Vendas</th><th>Mortes</th><th>Mortalidade</th></tr></thead>' +
     '<tbody>' + linhas + '</tbody></table></div>'
+
+  // Vincular eventos via addEventListener (sem inline onclick)
+  document.querySelectorAll('.hist-mes-row').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const key = tr.dataset.key
+      const mes = parseInt(tr.dataset.mes)
+      const ano = parseInt(tr.dataset.ano)
+      toggleHistDias(key, mes, ano)
+    })
+  })
 }
 
 async function toggleHistDias(key, mes, ano) {
@@ -450,37 +462,37 @@ function renderDiasInner(key, dias) {
   if (!inner) return
 
   if (!dias || dias.length === 0) {
-    inner.innerHTML = '<em class="sem-dias">Nenhum registro diário — apenas total mensal</em>'
+    inner.innerHTML = '<em class="sem-dias">Sem registros diários para este mês</em>'
     return
   }
 
-  const linhas = dias
-    .filter(d => d.dia)
-    .sort((a,b) => b.dia - a.dia)
-    .map(d => {
-      const mortPct = parseFloat(d.mortalidade_pct||0).toFixed(3)
-      const dataStr = String(d.dia).padStart(2,'0') + '/' + String(d.mes).padStart(2,'0') + '/' + d.ano
-      return '<tr class="hist-dia-row visivel">' +
-        '<td>📅 ' + dataStr + (d.lote_nome && d.lote_nome !== 'Geral' ? ' — ' + d.lote_nome : '') + '</td>' +
-        '<td>' + Number(d.total_rebanho).toLocaleString('pt-BR') + '</td>' +
-        '<td>' + Number(d.total_machos).toLocaleString('pt-BR') + '</td>' +
-        '<td>' + Number(d.total_femeas).toLocaleString('pt-BR') + '</td>' +
-        '<td>' + (d.total_nascimentos||0) + '</td>' +
-        '<td>' + (d.total_compras||0) + '</td>' +
-        '<td>' + (d.total_vendas||0) + '</td>' +
-        '<td>' + (d.total_mortes||0) + '</td>' +
-        '<td class="' + (parseFloat(mortPct)>1?'mort-high':'mort-ok') + '">' + mortPct + '%</td>' +
-        '</tr>'
-    }).join('')
-
-  if (!linhas) {
-    inner.innerHTML = '<em class="sem-dias">Sem registros com dia específico</em>'
+  const comDia = dias.filter(d => d.dia)
+  if (comDia.length === 0) {
+    inner.innerHTML = '<em class="sem-dias">Apenas total mensal — sem registros por dia</em>'
     return
   }
 
-  // Injetar linhas após o tr pai
-  inner.closest('tr').outerHTML = linhas
+  const linhas = comDia.sort((a,b) => a.dia - b.dia).map(d => {
+    const mortPct = parseFloat(d.mortalidade_pct||0).toFixed(3)
+    const dataStr = String(d.dia).padStart(2,'0') + '/' + String(d.mes).padStart(2,'0') + '/' + d.ano
+    const loteInfo = d.lote_nome && d.lote_nome !== 'Geral' ? ' <span style="color:var(--verde);font-size:10px">● ' + d.lote_nome + '</span>' : ''
+    const mortCls = parseFloat(mortPct) > 1 ? 'mort-high' : 'mort-ok'
+    return `<div style="display:grid;grid-template-columns:160px repeat(8,1fr);gap:4px;padding:5px 8px;border-bottom:1px solid var(--bg);font-size:11px;align-items:center">
+      <span style="color:var(--muted)">📅 ${dataStr}${loteInfo}</span>
+      <span style="font-weight:600">${Number(d.total_rebanho).toLocaleString('pt-BR')}</span>
+      <span>${Number(d.total_machos).toLocaleString('pt-BR')}</span>
+      <span>${Number(d.total_femeas).toLocaleString('pt-BR')}</span>
+      <span>${d.total_nascimentos||0}</span>
+      <span>${d.total_compras||0}</span>
+      <span>${d.total_vendas||0}</span>
+      <span>${d.total_mortes||0}</span>
+      <span class="${mortCls}">${mortPct}%</span>
+    </div>`
+  }).join('')
+
+  inner.innerHTML = linhas
 }
+
 
 carregar()
 
