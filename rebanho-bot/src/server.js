@@ -5,7 +5,7 @@ const twilio = require('twilio')
 const path = require('path')
 const { createClient } = require('@supabase/supabase-js')
 const { transcreverAudio } = require('./transcricao')
-const { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, gerarResumoWhatsApp } = require('./extracao')
+const { extrairDadosRebanho, extrairComplemento, gerarResumoWhatsApp } = require('./extracao')
 const { salvarRebanho, buscarResumoMensal, buscarResumoPorLote } = require('./supabase')
 
 const app = express()
@@ -303,25 +303,6 @@ async function perguntarProximoCadastro(de) {
 async function tratarRespostaSessao(de, textoResposta, dados, etapa) {
   const resposta = (textoResposta || '').trim().toLowerCase()
 
-  // Etapa de movimentação com campos faltando
-  if (etapa === 'movimentacao_campo') {
-    const movDados = dados.mov || {}
-    const falt = dados.faltando || []
-    const PERGS = { tipo:'📋 *Qual o tipo?* (morte, compra, venda, transferência)', quantidade:'🔢 *Quantos animais?*', categoria:'🐄 *Qual a categoria?*', data:'📅 *Qual a data?*' }
-    const campoAtual = falt[0]
-    if (campoAtual === 'quantidade') movDados.quantidade = parseInt(textoResposta) || 0
-    else movDados[campoAtual] = textoResposta.trim()
-    const faltRest = falt.slice(1)
-    if (faltRest.length > 0) {
-      setSessao(de, { _movimentacao: true, mov: movDados, faltando: faltRest }, 'movimentacao_campo')
-      await enviarMensagem(de, PERGS[faltRest[0]])
-    } else {
-      limparSessao(de)
-      await salvarEResponderMovimentacao(de, movDados)
-    }
-    return
-  }
-
   // Etapas de cadastro progressivo
   if (etapa.startsWith('cadastro_')) {
     const campo = etapa.replace('cadastro_', '')
@@ -382,25 +363,10 @@ async function processarAudio(de, mediaUrl) {
 }
 
 async function processarTexto(de, texto) {
-  // Detectar se é movimentação pontual ou mapa mensal
-  const sessaoAtiva2 = sessoes[de]
-  const jaTemSessao = sessaoAtiva2 && sessaoAtiva2.dados && !sessaoAtiva2.dados._cadastro
-
-  if (!jaTemSessao) {
-    const tipo = await detectarTipoRegistro(texto)
-    if (tipo === 'movimentacao') {
-      console.log('Detectado: MOVIMENTAÇÃO')
-      const mov = await extrairMovimentacao(texto)
-      await processarMovimentacao(de, mov, texto)
-      return
-    }
-    console.log('Detectado: MAPA MENSAL')
-  }
-
   const dados = await extrairDadosRebanho(texto)
 
   // Se há sessão ativa com dados do mesmo período, mesclar em vez de descartar
-  const sessaoAtiva = sessaoAtiva2
+  const sessaoAtiva = sessoes[de]
   if (sessaoAtiva && sessaoAtiva.dados && !sessaoAtiva.dados._cadastro) {
     const dadosBase = sessaoAtiva.dados
     const mesmoMes = (!dados.mes && !dados.ano) ||
@@ -422,6 +388,9 @@ async function processarTexto(de, texto) {
 async function processarComplemento(de, resposta, dadosAtuais, etapa) {
   const complemento = await extrairComplemento(resposta, dadosAtuais, etapa)
   const dadosMerge = mesclarDados(dadosAtuais, complemento)
+  // Preservar flags de controle de fluxo
+  dadosMerge._movPerguntada = dadosAtuais._movPerguntada
+  dadosMerge._existPerguntada = dadosAtuais._existPerguntada
   await avancarFluxo(de, dadosMerge)
 }
 
@@ -429,13 +398,19 @@ async function processarComplemento(de, resposta, dadosAtuais, etapa) {
 async function avancarFluxo(de, dados) {
   const faltando = analisarFaltando(dados)
 
-  // Verificar campos obrigatórios em ordem
-  for (const campo of ['periodo', 'existencia']) {
-    if (faltando.includes(campo)) {
-      setSessao(de, dados, campo)
-      await enviarMensagem(de, gerarPergunta(campo, dados))
-      return
-    }
+  // Verificar período (sempre obrigatório)
+  if (faltando.includes('periodo')) {
+    setSessao(de, dados, 'periodo')
+    await enviarMensagem(de, gerarPergunta('periodo', dados))
+    return
+  }
+
+  // Verificar existência — apenas uma vez (flag _existPerguntada)
+  if (faltando.includes('existencia') && !dados._existPerguntada) {
+    dados._existPerguntada = true
+    setSessao(de, dados, 'existencia')
+    await enviarMensagem(de, gerarPergunta('existencia', dados))
+    return
   }
 
   // Verificar movimentações (opcional mas importante)
@@ -495,69 +470,6 @@ function mesclarDados(base, complemento) {
   })
 
   return merged
-}
-
-
-// ─── Processar movimentação pontual ────────────────────────────────────────────
-async function processarMovimentacao(de, mov, textoOriginal) {
-  const faltando = []
-  if (!mov.tipo) faltando.push('tipo')
-  if (!mov.quantidade || mov.quantidade === 0) faltando.push('quantidade')
-  if (!mov.categoria) faltando.push('categoria')
-  if (!mov.data_mov && !mov.mes) faltando.push('data')
-
-  if (faltando.length > 0) {
-    const PERGUNTAS = {
-      tipo: '📋 *Qual o tipo de movimentação?*\\nEx: morte, compra, venda, transferência, nascimento',
-      quantidade: '🔢 *Quantos animais foram movimentados?*',
-      categoria: '🐄 *Qual a categoria dos animais?*',
-      data: '📅 *Qual a data da movimentação?*',
-    }
-    setSessao(de, { _movimentacao: true, mov, faltando }, 'movimentacao_campo')
-    await enviarMensagem(de, '_Registrei a movimentação! Alguns dados ficaram faltando._\\n\\n' + PERGUNTAS[faltando[0]])
-    return
-  }
-  await salvarEResponderMovimentacao(de, mov)
-}
-
-async function salvarEResponderMovimentacao(de, mov) {
-  try {
-    const tipoMap = {
-      entrada_compra:'entrada_compra', saida_venda:'saida_venda',
-      transferencia:'entrada_transferencia', saida_morte:'saida_morte',
-      entrada_nascimento:'entrada_nascimento', entrada_desmama:'entrada_desmama',
-      saida_desmama:'saida_desmama', pesagem:'pesagem',
-    }
-    const tipo = tipoMap[mov.tipo] || mov.tipo || 'entrada_compra'
-    let dataIso = null
-    if (mov.dia && mov.mes && mov.ano) {
-      dataIso = mov.ano + '-' + String(mov.mes).padStart(2,'0') + '-' + String(mov.dia).padStart(2,'0')
-    }
-    await supabase.from('movimentacoes_lote').insert({
-      fazenda: mov.fazenda || 'Grupo Ricci',
-      tipo,
-      data_mov: dataIso || new Date().toISOString().substring(0,10),
-      quantidade: mov.quantidade || 1,
-      observacoes: [mov.categoria && 'Cat: '+mov.categoria, mov.brincos && 'Brincos: '+mov.brincos, mov.motivo && 'Motivo: '+mov.motivo, mov.responsavel && 'Resp: '+mov.responsavel, mov.ocorrencia && 'Ocorrencia: '+mov.ocorrencia, mov.origem && 'Origem: '+mov.origem, mov.destino && 'Destino: '+mov.destino].filter(Boolean).join(' | ') || null,
-      whatsapp_de: de,
-    })
-    const tipoLabel = {entrada_compra:'Compra',saida_venda:'Venda',transferencia:'Transferência',saida_morte:'Morte',entrada_nascimento:'Nascimento',entrada_desmama:'Desmama',pesagem:'Pesagem'}[mov.tipo] || mov.tipo
-    const dataStr = mov.dia ? mov.dia+'/'+mov.mes+'/'+mov.ano : 'hoje'
-    await enviarMensagem(de,
-      '*Movimentação registrada!* ✅\\n\\n' +
-      '*Tipo:* ' + tipoLabel + '\\n' +
-      '*Data:* ' + dataStr + '\\n' +
-      '*Quantidade:* ' + (mov.quantidade||'?') + ' cabeças\\n' +
-      '*Categoria:* ' + (mov.categoria||'?') + '\\n' +
-      (mov.origem ? '*Origem:* ' + mov.origem + '\\n' : '') +
-      (mov.destino ? '*Destino:* ' + mov.destino + '\\n' : '') +
-      (mov.responsavel ? '*Responsável:* ' + mov.responsavel + '\\n' : '') +
-      (mov.ocorrencia ? '\\n⚠️ *Ocorrência:* ' + mov.ocorrencia : '')
-    )
-  } catch(err) {
-    console.error('Erro ao salvar movimentação:', err.message)
-    await enviarMensagem(de, 'Erro ao salvar movimentação: ' + err.message)
-  }
 }
 
 // ─── Salvar após confirmação ──────────────────────────────────────────────────
