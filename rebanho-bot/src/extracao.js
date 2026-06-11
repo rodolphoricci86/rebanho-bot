@@ -78,9 +78,9 @@ FÊMEAS (sexo: "F"):
 
 async function chamarGroq(mensagens, maxTokens) {
   const response = await axios.post(
-    'https://api.groq.com/openai/v1/chat/completions',
+    'https://api.openai.com/v1/chat/completions',
     {
-      model: 'llama-3.3-70b-versatile',
+      model: 'gpt-4o-mini',
       messages: mensagens,
       temperature: 0.05,
       response_format: { type: 'json_object' },
@@ -88,7 +88,7 @@ async function chamarGroq(mensagens, maxTokens) {
     },
     {
       headers: {
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       timeout: 30000,
