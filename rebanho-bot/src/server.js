@@ -65,7 +65,9 @@ function gerarPergunta(etapa, dados) {
   }
 
   if (etapa === 'existencia') {
-    return `_Não identifiquei a existência atual dos animais._\n\n🐄 *Quantas cabeças tem ao todo?*\nOu envie um novo áudio com os totais por categoria.`
+    const temCats = (dados.categorias || []).filter(c => c.existencia_atual > 0)
+    const jatem = temCats.length > 0 ? '\n\nJá registrei: ' + temCats.map(c => c.item + ' (' + c.existencia_atual + ')').join(', ') : ''
+    return '_Não identifiquei todas as existências._' + jatem + '\n\n🐄 *Continue enviando os dados por categoria.*'
   }
 
   if (etapa === 'movimentacoes') {
@@ -352,6 +354,23 @@ async function processarAudio(de, mediaUrl) {
 
 async function processarTexto(de, texto) {
   const dados = await extrairDadosRebanho(texto)
+
+  // Se há sessão ativa com dados do mesmo período, mesclar em vez de descartar
+  const sessaoAtiva = sessoes[de]
+  if (sessaoAtiva && sessaoAtiva.dados && !sessaoAtiva.dados._cadastro) {
+    const dadosBase = sessaoAtiva.dados
+    const mesmoMes = (!dados.mes && !dados.ano) ||
+                     (!dadosBase.mes && !dadosBase.ano) ||
+                     (dados.mes === dadosBase.mes && dados.ano === dadosBase.ano)
+    if (mesmoMes) {
+      console.log("Mesclando novo áudio com sessão existente (" + sessaoAtiva.etapa + ")")
+      const dadosMerge = mesclarDados(dadosBase, dados)
+      dadosMerge._movPerguntada = dadosBase._movPerguntada
+      await avancarFluxo(de, dadosMerge)
+      return
+    }
+  }
+
   await avancarFluxo(de, dados)
 }
 
@@ -391,10 +410,12 @@ async function avancarFluxo(de, dados) {
 function mesclarDados(base, complemento) {
   const merged = { ...base }
 
-  if (complemento.mes && !base.mes) merged.mes = complemento.mes
-  if (complemento.ano && !base.ano) merged.ano = complemento.ano
-  if (complemento.lote_nome && !base.lote_nome) merged.lote_nome = complemento.lote_nome
-  if (complemento.lote_pasto && !base.lote_pasto) merged.lote_pasto = complemento.lote_pasto
+  merged.mes = complemento.mes || base.mes || null
+  merged.ano = complemento.ano || base.ano || null
+  merged.dia = complemento.dia || base.dia || null
+  if (complemento.lote_nome) merged.lote_nome = complemento.lote_nome
+  if (complemento.lote_pasto) merged.lote_pasto = complemento.lote_pasto
+  if (complemento.fazenda && complemento.fazenda !== 'Grupo Ricci') merged.fazenda = complemento.fazenda
 
   // Mesclar categorias
   const catMap = {}
