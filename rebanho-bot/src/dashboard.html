@@ -472,25 +472,39 @@ function renderDiasInner(key, dias) {
     return
   }
 
-  const linhas = comDia.sort((a,b) => a.dia - b.dia).map(d => {
-    const mortPct = parseFloat(d.mortalidade_pct||0).toFixed(3)
-    const dataStr = String(d.dia).padStart(2,'0') + '/' + String(d.mes).padStart(2,'0') + '/' + d.ano
-    const loteInfo = d.lote_nome && d.lote_nome !== 'Geral' ? ' <span style="color:var(--verde);font-size:10px">● ' + d.lote_nome + '</span>' : ''
-    const mortCls = parseFloat(mortPct) > 1 ? 'mort-high' : 'mort-ok'
-    return `<div style="display:grid;grid-template-columns:160px repeat(8,1fr);gap:4px;padding:5px 8px;border-bottom:1px solid var(--bg);font-size:11px;align-items:center">
-      <span style="color:var(--muted)">📅 ${dataStr}${loteInfo}</span>
-      <span style="font-weight:600">${Number(d.total_rebanho).toLocaleString('pt-BR')}</span>
-      <span>${Number(d.total_machos).toLocaleString('pt-BR')}</span>
-      <span>${Number(d.total_femeas).toLocaleString('pt-BR')}</span>
-      <span>${d.total_nascimentos||0}</span>
-      <span>${d.total_compras||0}</span>
-      <span>${d.total_vendas||0}</span>
-      <span>${d.total_mortes||0}</span>
-      <span class="${mortCls}">${mortPct}%</span>
-    </div>`
+  const linhas = comDia.sort(function(a,b){ return a.dia - b.dia }).map(function(d) {
+    var mortPct = parseFloat(d.mortalidade_pct||0).toFixed(3)
+    var dataStr = String(d.dia).padStart(2,'0') + '/' + String(d.mes).padStart(2,'0') + '/' + d.ano
+    var loteStr = (d.lote_nome && d.lote_nome !== 'Geral') ? ' [' + d.lote_nome + ']' : ''
+    var mortCls = parseFloat(mortPct) > 1 ? 'mort-high' : 'mort-ok'
+    var row = '<tr class="hist-dia-row visivel" style="background:#fafaf7">'
+    row += '<td style="padding-left:28px;color:var(--muted);font-size:11px">' + dataStr + loteStr + '</td>'
+    row += '<td>' + Number(d.total_rebanho).toLocaleString('pt-BR') + '</td>'
+    row += '<td>' + Number(d.total_machos).toLocaleString('pt-BR') + '</td>'
+    row += '<td>' + Number(d.total_femeas).toLocaleString('pt-BR') + '</td>'
+    row += '<td>' + (d.total_nascimentos||0) + '</td>'
+    row += '<td>' + (d.total_compras||0) + '</td>'
+    row += '<td>' + (d.total_vendas||0) + '</td>'
+    row += '<td>' + (d.total_mortes||0) + '</td>'
+    row += '<td class="' + mortCls + '">' + mortPct + '%</td>'
+    row += '</tr>'
+    return row
   }).join('')
 
-  inner.innerHTML = linhas
+  // Inserir linhas <tr> diretamente na tabela, após a linha de dias
+  var diasTr = inner.closest('tr')
+  if (diasTr && diasTr.parentNode) {
+    var tmp = document.createElement('tbody')
+    tmp.innerHTML = linhas
+    var ref = diasTr
+    Array.from(tmp.querySelectorAll('tr')).forEach(function(tr) {
+      ref.parentNode.insertBefore(tr, ref.nextSibling)
+      ref = tr
+    })
+    inner.innerHTML = '<em class="sem-dias" style="font-size:11px">' + comDia.length + ' dia(s) registrado(s)</em>'
+  } else {
+    inner.innerHTML = linhas
+  }
 }
 
 
