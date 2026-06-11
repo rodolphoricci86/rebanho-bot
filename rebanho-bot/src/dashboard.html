@@ -349,9 +349,9 @@ async function renderTabelaCat(d) {
       <div class="table-card-header">
         <h2>Detalhe por Categoria — ${MESES_FULL[d.mes]}/${d.ano}</h2>
         <div class="tab-btns">
-          <button class="tab-btn" id="btn-todos" onclick="filtroCat='todos';renderTabelaCat(dadosGlobais[0])">Todos</button>
-          <button class="tab-btn" id="btn-M" onclick="filtroCat='M';renderTabelaCat(dadosGlobais[0])">Machos</button>
-          <button class="tab-btn" id="btn-F" onclick="filtroCat='F';renderTabelaCat(dadosGlobais[0])">Fêmeas</button>
+          <button class="tab-btn" id="btn-todos" data-filtro="todos">Todos</button>
+          <button class="tab-btn" id="btn-M" data-filtro="M">Machos</button>
+          <button class="tab-btn" id="btn-F" data-filtro="F">Fêmeas</button>
         </div>
       </div>
       <div style="overflow-x:auto">
@@ -507,6 +507,15 @@ function renderDiasInner(key, dias) {
   }
 }
 
+
+// Event delegation para botões de filtro de categoria
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-filtro]')
+  if (!btn) return
+  filtroCat = btn.dataset.filtro
+  renderTabelaCat(dadosGlobais[0])
+  atualizarEstilos()
+})
 
 carregar()
 
