@@ -393,19 +393,19 @@ function renderHistorico(dados) {
     const key    = m.ano + '-' + m.mes
     const periodo = MESES_FULL[m.mes] + '/' + m.ano
     const mortCls = parseFloat(mortPct) > 1 ? 'mort-high' : 'mort-ok'
-    return [
-      `<tr class="hist-mes-row" data-key="${key}" data-mes="${m.mes}" data-ano="${m.ano}" id="mes-row-${key}">`,
-      `  <td><strong>${periodo}</strong></td>`,
-      `  <td>${total.toLocaleString('pt-BR')}</td>`,
-      `  <td>${machos.toLocaleString('pt-BR')}</td>`,
-      `  <td>${femeas.toLocaleString('pt-BR')}</td>`,
-      `  <td>${nasc}</td><td>${comp}</td><td>${vend}</td><td>${mort}</td>`,
-      `  <td class="${mortCls}">${mortPct}%</td>`,
-      `</tr>`,
-      `<tr class="hist-dia-row" id="dias-row-${key}">`,
-      `  <td colspan="9"><div id="dias-inner-${key}" style="padding:4px 8px"><em class="sem-dias">Carregando...</em></div></td>`,
-      `</tr>`
-    ].join('')
+    var r = ''
+    r += '<tr class="hist-mes-row" data-key="' + key + '" data-mes="' + m.mes + '" data-ano="' + m.ano + '" id="mes-row-' + key + '">'
+    r += '<td><strong>' + periodo + '</strong></td>'
+    r += '<td>' + total.toLocaleString("pt-BR") + '</td>'
+    r += '<td>' + machos.toLocaleString("pt-BR") + '</td>'
+    r += '<td>' + femeas.toLocaleString("pt-BR") + '</td>'
+    r += '<td>' + nasc + '</td><td>' + comp + '</td><td>' + vend + '</td><td>' + mort + '</td>'
+    r += '<td class="' + mortCls + '">' + mortPct + '%</td>'
+    r += '</tr>'
+    r += '<tr class="hist-dia-row" id="dias-row-' + key + '">'
+    r += '<td colspan="9"><div id="dias-inner-' + key + '" style="padding:4px 8px"><em class="sem-dias">Carregando...</em></div></td>'
+    r += '</tr>'
+    return r
   }).join('')
 
   document.getElementById('historico').innerHTML =
