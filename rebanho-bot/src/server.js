@@ -677,6 +677,21 @@ app.get('/api/resumo/dias', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+
+app.get('/api/movimentacoes', async (req, res) => {
+  try {
+    const { limite = 50, fazenda = 'Grupo Ricci' } = req.query
+    const { data, error } = await supabase
+      .from('movimentacoes_lote')
+      .select('*')
+      .eq('fazenda', fazenda)
+      .order('data_mov', { ascending: false, nullsFirst: false })
+      .limit(parseInt(limite))
+    if (error) throw new Error(error.message)
+    res.json({ ok: true, data: data || [] })
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 app.get('/api/lotes', async (req, res) => {
   try {
     res.json({ ok: true, data: await buscarResumoPorLote(req.query.fazenda||'Grupo Ricci') })
