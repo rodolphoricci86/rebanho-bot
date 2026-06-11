@@ -192,4 +192,98 @@ ${linhasCat||'  (nenhuma)'}
 _Dados salvos no sistema._ ✅`
 }
 
-module.exports = { extrairDadosRebanho, extrairComplemento, gerarResumoWhatsApp }
+
+
+// ─── SCRIPT DE MOVIMENTAÇÃO ────────────────────────────────────────────────────
+const PROMPT_MOVIMENTACAO = `Você é um especialista em pecuária bovina. O fazendeiro enviou dados de MOVIMENTAÇÃO de gado.
+
+Extraia os campos abaixo do texto transcrito e retorne APENAS JSON válido.
+
+TIPOS DE MOVIMENTAÇÃO aceitos:
+- entrada_compra: compra, entrada, aquisição, chegou
+- saida_venda: venda, saída, vendeu, foi embora, frigorífico
+- transferencia: transferência, mudança de pasto, foi para, saiu do pasto
+- saida_morte: morte, morreu, óbito, baixa, perdemos
+- entrada_nascimento: nascimento, nasceu, parto, nasceu
+- entrada_desmama: desmama, desmamou, saiu da mãe
+- saida_desmama: desmama saída
+- saida_transferencia: transferência saída
+- entrada_transferencia: transferência entrada
+- pesagem: pesagem, pesou, peso
+
+CATEGORIAS:
+- bezerro(a) 0-8m, bezerro(a) 8-12m, garrote/novilho 13-24m, boi/novilho adulto 25-36m,
+  boi +36m, touro, bezerra 0-2m, bezerra 3-8m, bezerra 9-12m, novilha 13-24m,
+  vaca solteira, vaca parida, misto
+
+FORMATO DE SAÍDA:
+{
+  "fazenda": "nome da fazenda ou Grupo Ricci",
+  "data_mov": "DD/MM/AAAA ou null",
+  "dia": null,
+  "mes": null,
+  "ano": null,
+  "tipo": "entrada_compra|saida_venda|transferencia|saida_morte|entrada_nascimento|entrada_desmama|pesagem",
+  "quantidade": 0,
+  "categoria": "descrição da categoria dos animais",
+  "categoria_item": "1.1 a 2.8 ou null",
+  "sexo": "M|F|misto|null",
+  "origem": "nome do pasto/fazenda de origem ou null",
+  "destino": "nome do pasto/fazenda de destino ou null",
+  "lote_origem": "lote de origem ou null",
+  "lote_destino": "lote de destino ou null",
+  "brincos": "lista de brincos ou descrição ou null",
+  "peso_total": null,
+  "peso_medio": null,
+  "motivo": "motivo da movimentação ou null",
+  "responsavel": "nome do responsável ou null",
+  "ocorrencia": "descrição de ocorrência ou null",
+  "observacoes": "observações livres ou null"
+}`
+
+async function extrairMovimentacao(texto) {
+  const dados = await chamarGroq([
+    { role: 'system', content: PROMPT_MOVIMENTACAO },
+    { role: 'user', content: 'Texto transcrito (pode ter erros): "' + texto + '"' },
+  ], 2000)
+
+  // Parsear data se veio como string
+  if (dados.data_mov && !dados.mes) {
+    const partes = dados.data_mov.match(/(\d{1,2})[\/](\d{1,2})[\/](\d{4})/)
+    if (partes) {
+      dados.dia = parseInt(partes[1])
+      dados.mes = parseInt(partes[2])
+      dados.ano = parseInt(partes[3])
+    }
+  }
+
+  console.log('Movimentação extraída: tipo=' + dados.tipo + ' qty=' + dados.quantidade + ' cat=' + dados.categoria)
+  return dados
+}
+
+// ─── Detectar se é registro de movimentação ou mapa de rebanho ────────────────
+async function detectarTipoRegistro(texto) {
+  const lower = texto.toLowerCase()
+
+  // Palavras que indicam MOVIMENTAÇÃO pontual
+  const palavrasMovim = [
+    'movimentação', 'movimentacao', 'registrar', 'entrada de', 'saída de', 'transferi',
+    'morreu', 'morte de', 'nasceu', 'comprei', 'compra de', 'vendi', 'venda de',
+    'pesagem', 'pesou', 'transferência', 'foi para', 'veio de', 'baixa', 'perdemos',
+    'chegou', 'saiu', 'brinco', 'lote', 'pasto'
+  ]
+
+  // Palavras que indicam MAPA MENSAL
+  const palavrasMapa = [
+    'mapa', 'fechamento', 'existência', 'existencia', 'rebanho', 'cabeças',
+    'bezerros', 'garrotes', 'vacas paridas', 'vacas solteiras', 'novilhas'
+  ]
+
+  const scoreMovim = palavrasMovim.filter(p => lower.includes(p)).length
+  const scoreMapa = palavrasMapa.filter(p => lower.includes(p)).length
+
+  if (scoreMovim > scoreMapa && scoreMovim >= 2) return 'movimentacao'
+  return 'mapa'
+}
+
+module.exports = { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, gerarResumoWhatsApp }
