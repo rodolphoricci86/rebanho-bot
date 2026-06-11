@@ -61,7 +61,7 @@ function gerarPergunta(etapa, dados) {
     'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
 
   if (etapa === 'periodo') {
-    return `_Não identifiquei o período nos dados._\n\n📅 *Para qual mês e ano é este mapa?*\nEx: *março de 2026*`
+    return `_Não identifiquei a data nos dados._\n\n📅 *Para qual data é este mapa? (dia, mês e ano)*\nEx: *15 de março de 2026* ou *15/03/2026*`
   }
 
   if (etapa === 'existencia') {
