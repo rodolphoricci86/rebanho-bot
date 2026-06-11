@@ -4,7 +4,7 @@ const path = require('path')
 const os = require('os')
 const FormData = require('form-data')
 
-async function transcreverAudio(mediaUrl, accountSid, authToken) {
+async function transcreverAudio(mediaUrl, accountSid, authToken, tentativa = 1) {
   const tmpPath = path.join(os.tmpdir(), `audio_${Date.now()}.ogg`)
 
   // 1. Baixar audio do Twilio
@@ -17,7 +17,7 @@ async function transcreverAudio(mediaUrl, accountSid, authToken) {
   fs.writeFileSync(tmpPath, response.data)
   console.log(`Audio salvo: ${tmpPath} (${response.data.byteLength} bytes)`)
 
-  // 2. Transcrever com OpenAI Whisper
+  // 2. Transcrever com OpenAI Whisper (com retry em 429)
   const form = new FormData()
   form.append('file', fs.createReadStream(tmpPath), {
     filename: 'audio.ogg',
@@ -27,23 +27,33 @@ async function transcreverAudio(mediaUrl, accountSid, authToken) {
   form.append('language', 'pt')
   form.append('response_format', 'text')
 
-  const whisperResponse = await axios.post(
-    'https://api.openai.com/v1/audio/transcriptions',
-    form,
-    {
-      headers: {
-        ...form.getHeaders(),
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
-      timeout: 60000,
+  try {
+    const whisperResponse = await axios.post(
+      'https://api.openai.com/v1/audio/transcriptions',
+      form,
+      {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        timeout: 60000,
+      }
+    )
+    try { fs.unlinkSync(tmpPath) } catch (_) {}
+    console.log('Transcricao:', String(whisperResponse.data).substring(0, 100))
+    return whisperResponse.data
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath) } catch (_) {}
+    if (err.response?.status === 429 && tentativa < 4) {
+      const espera = tentativa * 5000
+      console.log(`Whisper 429 - tentativa ${tentativa}/3, aguardando ${espera/1000}s...`)
+      await new Promise(r => setTimeout(r, espera))
+      return transcreverAudio(mediaUrl, accountSid, authToken, tentativa + 1)
     }
-  )
-
-  try { fs.unlinkSync(tmpPath) } catch (_) {}
-  console.log('Transcricao:', String(whisperResponse.data).substring(0, 100))
-  return whisperResponse.data
+    throw err
+  }
 }
 
 module.exports = { transcreverAudio }
