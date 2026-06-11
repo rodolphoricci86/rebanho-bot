@@ -135,8 +135,21 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
 
     // ── Sessão ativa: processar resposta ──
     if (sessao) {
-      const resposta = (corpo || '').trim().toLowerCase()
       const { dados, etapa } = sessao
+      const temAudio = parseInt(numMedia) > 0 && mediaType?.startsWith('audio')
+
+      if (temAudio) {
+        responderWhatsApp(res, '_Ouvindo seu áudio..._')
+        transcreverAudio(mediaUrl, process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+          .then(txt => {
+            console.log('Áudio em sessão (' + etapa + '):', txt.substring(0, 100))
+            return tratarRespostaSessao(de, txt, dados, etapa)
+          })
+          .catch(err => enviarMensagem(de, 'Erro: ' + err.message))
+        return
+      }
+
+      const resposta = (corpo || '').trim().toLowerCase()
 
       // CONFIRMAÇÃO
       if (etapa === 'confirmacao') {
@@ -156,6 +169,7 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
 
       // MOVIMENTAÇÕES: aceitar "não" ou processar resposta
       if (etapa === 'movimentacoes') {
+        dados._movPerguntada = true
         if (resposta === 'não' || resposta === 'nao' || resposta === 'n' || resposta === 'nenhuma') {
           // Sem movimentações — ir para confirmação
           setSessao(de, dados, 'confirmacao')
@@ -217,6 +231,37 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
   }
 })
 
+// ─── Tratar resposta dentro de sessão (texto ou áudio transcrito) ────────────
+async function tratarRespostaSessao(de, textoResposta, dados, etapa) {
+  const resposta = (textoResposta || '').trim().toLowerCase()
+
+  if (etapa === 'confirmacao') {
+    if (['sim','s','yes','ok','confirmo','correto'].includes(resposta)) {
+      limparSessao(de)
+      await finalizarSalvamento(de, dados)
+    } else if (['não','nao','n','errado'].includes(resposta)) {
+      limparSessao(de)
+      await enviarMensagem(de, '_Ok! Envie um novo áudio com os dados corrigidos._')
+    } else {
+      await enviarMensagem(de, '_Responda *sim* para salvar ou *não* para corrigir._')
+    }
+    return
+  }
+
+  if (etapa === 'movimentacoes') {
+    dados._movPerguntada = true
+    if (['não','nao','n','nenhuma','nenhum'].includes(resposta)) {
+      setSessao(de, dados, 'confirmacao')
+      await enviarMensagem(de, gerarResumoConfirmacao(dados))
+      return
+    }
+    await processarComplemento(de, textoResposta, dados, 'movimentacoes')
+    return
+  }
+
+  await processarComplemento(de, textoResposta, dados, etapa)
+}
+
 // ─── Processamento principal ──────────────────────────────────────────────────
 async function processarAudio(de, mediaUrl) {
   const texto = await transcreverAudio(mediaUrl,
@@ -251,7 +296,7 @@ async function avancarFluxo(de, dados) {
   }
 
   // Verificar movimentações (opcional mas importante)
-  if (faltando.includes('movimentacoes')) {
+  if (faltando.includes('movimentacoes') && !dados._movPerguntada) {
     setSessao(de, dados, 'movimentacoes')
     await enviarMensagem(de, gerarPergunta('movimentacoes', dados))
     return
