@@ -12,7 +12,7 @@ MACHOS (sexo: "M"):
 - 1.2 Bezerros 8-12m   | bezerro desmamado, macho desmamado, garrote jovem
 - 1.3 Garrotes 13-24m  | garrote, novilho, boi jovem, garrote médio, garrote de recria, garote
 - 1.4 Garrotes PO      | garrote PO, garrote puro origem, garrote de raça
-- 1.5 Bois 25-36m      | boi, boj, boy, boi gordo, boi de engorda, boj dengorda, boi dengorda, boj de engorda, engorda, macho adulto, novilho adulto, boi recria
+- 1.5 Bois 25-36m      | boi, boj, boy, boi gordo, boi de engorda, boj dengorda, boi dengorda, boj de engorda, engorda, macho adulto, novilho adulto
 - 1.6 Bois +36m        | boi velho, boi adulto, boi de corte, boi pesado, boi grande
 - 1.7 Touros PO        | touro, reprodutor, touro de raça, touro PO, pai, toro, tourro
 
@@ -22,25 +22,29 @@ FÊMEAS (sexo: "F"):
 - 2.3 Bezerras 9-12m   | bezerra desmamada, fêmea desmamada, bezerra de recria
 - 2.4 Novilhas 13-24m  | novilha, novilha jovem, fêmea de recria, novilha de cria, novilha recria
 - 2.5 Novilhas PO      | novilha PO, novilha puro origem, novilha de raça
-- 2.6 Vacas solteiras  | vaca solteira, vaca falhada, vaca vazia, vaca sem bezerro, vaca seca, vaca solteira
+- 2.6 Vacas solteiras  | vaca solteira, vaca falhada, vaca vazia, vaca sem bezerro, vaca seca
 - 2.7 Vacas paridas    | vaca parida, vaca com bezerro, vaca de cria, vaca amamentando, vaca lactante
 - 2.8 Vacas PO         | vaca PO, vaca puro origem, vaca de raça, matriz PO
 
 ## REGRAS CRÍTICAS
-1. "boj", "boy", "boj dengorda", "boi dengorda", "boj de engorda" = categoria 1.5 (bois de engorda) — NÃO é nome de lote
-2. Se o texto parece uma categoria de animal (boi, vaca, bezerro, garrote, novilha, touro e variações) → é categoria, NÃO lote
-3. Lote/pasto = palavras como "pasto", "curral", "retiro", "lote A", "fazenda X", nome geográfico
-4. Mês por nome (janeiro=1...) ou número. Ano com 4 dígitos.
-5. Números por extenso: "duzentos e cinquenta" = 250, "trezentos e oitenta e dois" = 382
+1. "boj", "boy", "boj dengorda", "boi dengorda" = categoria 1.5 — NÃO é nome de lote
+2. Texto parecido com categoria de animal → é categoria, NÃO lote
+3. Lote/pasto = "pasto", "curral", "retiro", "lote A", nome geográfico
+4. DATA: extraia dia, mês e ano separadamente:
+   - "dia 15 de março de 2026" → dia: 15, mes: 3, ano: 2026
+   - "15/03/2026" → dia: 15, mes: 3, ano: 2026
+   - "março de 2026" (sem dia) → dia: null, mes: 3, ano: 2026
+   - "hoje", "ontem" → dia: null (será resolvido pelo sistema)
+5. Números por extenso: "duzentos e cinquenta" = 250
 6. "existência" ou "cabeças" ou "total" = existencia_atual
 7. "anterior" ou "mês passado" = existencia_anterior
 8. Valores negativos → use 0
 9. Se existencia_atual ausente → calcule: anterior + entradas - saídas
 10. "vaca" sem qualificação → 2.6. "vaca com bezerro" / "vaca parida" → 2.7
-11. Se o texto mencionar APENAS categoria e número sem mês → mes: null, ano: null
 
 ## FORMATO DE SAÍDA
 {
+  "dia": null,
   "mes": null,
   "ano": null,
   "fazenda": "Grupo Ricci",
@@ -112,7 +116,7 @@ async function extrairDadosRebanho(texto) {
   })
 
   dados.animais = dados.animais || []
-  console.log('Extraído: mes=' + dados.mes + ' ano=' + dados.ano + ' cats=' + dados.categorias.length + ' lote=' + dados.lote_nome)
+  console.log('Extraído: dia=' + dados.dia + ' mes=' + dados.mes + ' ano=' + dados.ano + ' cats=' + dados.categorias.length + ' lote=' + dados.lote_nome)
   return dados
 }
 
@@ -123,9 +127,9 @@ async function extrairComplemento(resposta, dadosAtuais, etapa) {
     .join(', ') || 'nenhuma'
 
   const contextos = {
-    periodo: 'O fazendeiro informa o período (mês e ano) do mapa. Extraia mes (1-12) e ano (4 dígitos). Retorne: { "mes": N, "ano": NNNN, "categorias": [] }',
+    periodo: 'O fazendeiro informa a data (dia, mês e ano) do mapa. Extraia dia (1-31 ou null), mes (1-12) e ano (4 dígitos). Ex: "15 de março de 2026" → dia:15, mes:3, ano:2026. "março 2026" → dia:null, mes:3, ano:2026. Retorne: { "dia": N, "mes": N, "ano": NNNN, "categorias": [] }',
     existencia: `O fazendeiro informa quantas cabeças tem por categoria. Categorias já registradas: ${catAtual}. Extraia categorias com existencia_atual.`,
-    movimentacoes: `O fazendeiro informa movimentações do mês (nascimentos, mortes, compras, vendas). Categorias: ${catAtual}. Extraia os números para as categorias corretas.`,
+    movimentacoes: `O fazendeiro informa movimentações (nascimentos, mortes, compras, vendas). Categorias: ${catAtual}. Extraia os números para as categorias corretas.`,
     lote: 'O fazendeiro informa o nome do lote ou pasto. Retorne: { "lote_nome": "...", "lote_pasto": "...", "categorias": [] }',
   }
 
@@ -140,7 +144,7 @@ Retorne APENAS JSON válido. Se não encontrar nada relevante, retorne { "catego
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: prompt },
     ], 2000)
-    console.log('Complemento etapa=' + etapa + ':', JSON.stringify(resultado).substring(0, 100))
+    console.log('Complemento etapa=' + etapa + ':', JSON.stringify(resultado).substring(0, 120))
     return resultado
   } catch (e) {
     console.error('Erro extrairComplemento:', e.message)
@@ -160,7 +164,9 @@ function gerarResumoWhatsApp(dados) {
   const machos  = dados.categorias.filter(c=>c.sexo==='M').reduce((s,c)=>s+(c.existencia_atual||0),0)
   const femeas  = dados.categorias.filter(c=>c.sexo==='F').reduce((s,c)=>s+(c.existencia_atual||0),0)
   const mortPct = totalAtual>0 ? ((totalMortes/totalAtual)*100).toFixed(3) : '0.000'
-  const periodo = dados.mes && dados.ano ? `${meses[dados.mes]}/${dados.ano}` : 'período informado'
+  const dataStr = dados.dia
+    ? `${String(dados.dia).padStart(2,'0')}/${String(dados.mes).padStart(2,'0')}/${dados.ano}`
+    : (dados.mes && dados.ano ? `${meses[dados.mes]}/${dados.ano}` : 'período informado')
   const loteInfo = dados.lote_nome ? `\n*Lote:* ${dados.lote_nome}${dados.lote_pasto?' — '+dados.lote_pasto:''}` : ''
   const linhasCat = dados.categorias.filter(c=>c.existencia_atual>0)
     .map(c=>`  ${c.item} ${c.discriminacao}: *${c.existencia_atual}*`).join('\n')
@@ -168,7 +174,7 @@ function gerarResumoWhatsApp(dados) {
   const obs = dados.observacoes ? `\n\n⚠️ _${dados.observacoes}_` : ''
 
   return `*Mapa de Rebanho — ${dados.fazenda||'Grupo Ricci'}*
-*${periodo}*${loteInfo}
+*${dataStr}*${loteInfo}
 
 *Total: ${totalAtual.toLocaleString('pt-BR')} cabeças*
   Machos: ${machos.toLocaleString('pt-BR')} | Fêmeas: ${femeas.toLocaleString('pt-BR')}
