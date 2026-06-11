@@ -223,17 +223,86 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
       return responderWhatsApp(res, '_Operação cancelada._')
     }
 
+    // Verificar cadastro do usuário
+    const usuario = await obterOuCriarUsuario(de)
+    const ehNovo = !usuario.nome
+
+    if (ehNovo) {
+      responderWhatsApp(res,
+        `*Olá! Sou o assistente de rebanho do Grupo Ricci.* 🐄\n\nVou te conhecer melhor em algumas perguntas rápidas — mas você já pode enviar áudios com dados do rebanho a qualquer momento!`)
+      perguntarProximoCadastro(de)
+      return
+    }
+
     responderWhatsApp(res,
-      `*Olá! Sou o assistente de rebanho do Grupo Ricci.* 🐄\n\nEnvie um *áudio* com os dados do mapa de rebanho.\n\nComandos:\n- *resumo* — últimos 3 meses\n- *lotes* — resumo por lote\n- *cancelar* — cancela operação em andamento`)
+      `*Olá${usuario.nome ? ', ' + usuario.nome.split(' ')[0] : ''}! Sou o assistente de rebanho do Grupo Ricci.* 🐄\n\nEnvie um *áudio* com os dados do mapa de rebanho.\n\nComandos:\n- *resumo* — últimos 3 meses\n- *lotes* — resumo por lote\n- *cancelar* — cancela operação em andamento`)
   } catch (err) {
     console.error('Erro webhook:', err)
     responderWhatsApp(res, 'Erro inesperado. Tente novamente.')
   }
 })
 
+// ─── Usuários e onboarding progressivo ────────────────────────────────────────
+const CAMPOS_CADASTRO = [
+  { campo: 'nome',        pergunta: '👋 Antes de continuar, como é seu *nome*?' },
+  { campo: 'funcao',      pergunta: '💼 Qual sua *função* na fazenda? (peão, gerente, veterinário...)' },
+  { campo: 'fazenda',     pergunta: '🏡 Em qual *fazenda ou unidade* você trabalha?' },
+  { campo: 'lotes_cuida', pergunta: '🐄 Quais *lotes ou pastos* você cuida? (pode listar vários)' },
+]
+
+async function obterOuCriarUsuario(whatsapp) {
+  const { data } = await supabase.from('usuarios').select('*').eq('whatsapp', whatsapp).single()
+  if (data) return data
+  const { data: novo } = await supabase.from('usuarios')
+    .insert({ whatsapp }).select('*').single()
+  return novo || { whatsapp }
+}
+
+async function salvarCampoUsuario(whatsapp, campo, valor) {
+  await supabase.from('usuarios')
+    .update({ [campo]: valor, atualizado_em: new Date() })
+    .eq('whatsapp', whatsapp)
+}
+
+async function incrementarEnvios(whatsapp) {
+  const { data } = await supabase.from('usuarios').select('total_envios').eq('whatsapp', whatsapp).single()
+  await supabase.from('usuarios')
+    .update({ total_envios: ((data?.total_envios) || 0) + 1 })
+    .eq('whatsapp', whatsapp)
+}
+
+function proximoCampoCadastro(usuario) {
+  for (const c of CAMPOS_CADASTRO) {
+    if (!usuario[c.campo]) return c
+  }
+  return null
+}
+
+async function perguntarProximoCadastro(de) {
+  const usuario = await obterOuCriarUsuario(de)
+  const proximo = proximoCampoCadastro(usuario)
+  if (!proximo) return false
+  setSessao(de, { _cadastro: true }, 'cadastro_' + proximo.campo)
+  await enviarMensagem(de, proximo.pergunta)
+  return true
+}
+
 // ─── Tratar resposta dentro de sessão (texto ou áudio transcrito) ────────────
 async function tratarRespostaSessao(de, textoResposta, dados, etapa) {
   const resposta = (textoResposta || '').trim().toLowerCase()
+
+  // Etapas de cadastro progressivo
+  if (etapa.startsWith('cadastro_')) {
+    const campo = etapa.replace('cadastro_', '')
+    const valor = (textoResposta || '').trim()
+    limparSessao(de)
+    if (valor.length > 1) {
+      await salvarCampoUsuario(de, campo, valor)
+      const labels = { nome: 'Nome', funcao: 'Função', fazenda: 'Fazenda', lotes_cuida: 'Lotes' }
+      await enviarMensagem(de, `✅ ${labels[campo] || campo} registrado: *${valor}*\n\n_Pode enviar seus áudios normalmente!_`)
+    }
+    return
+  }
 
   if (etapa === 'confirmacao') {
     if (['sim','s','yes','ok','confirmo','correto'].includes(resposta)) {
@@ -358,6 +427,9 @@ async function finalizarSalvamento(de, dados) {
   const resumo = gerarResumoWhatsApp(dados)
   await enviarMensagem(de, resumo)
   console.log(`Salvo: ${salvo.mes}/${salvo.ano} | ${salvo.totalCategorias} cats`)
+  incrementarEnvios(de).catch(() => {})
+  // Onboarding progressivo: perguntar um campo pendente após cada envio
+  setTimeout(() => { perguntarProximoCadastro(de).catch(() => {}) }, 2000)
 }
 
 async function enviarMensagem(para, mensagem) {
