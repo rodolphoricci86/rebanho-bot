@@ -44,7 +44,11 @@ function analisarFaltando(dados) {
 
   const temCategorias = dados.categorias && dados.categorias.length > 0
   const temExistencia = temCategorias && dados.categorias.some(c => c.existencia_atual > 0)
-  if (!temExistencia) faltando.push('existencia')
+  const temMovimentacao = temCategorias && dados.categorias.some(c =>
+    (c.entrada_nascimento||0)+(c.entrada_compra||0)+(c.saida_morte||0)+
+    (c.saida_venda||0)+(c.saida_desmama||0)+(c.entrada_desmama||0) > 0
+  )
+  if (!temExistencia && !temMovimentacao) faltando.push('existencia')
 
   const temMovim = temCategorias && dados.categorias.some(c =>
     (c.entrada_nascimento || 0) + (c.saida_morte || 0) +
@@ -66,8 +70,14 @@ function gerarPergunta(etapa, dados) {
 
   if (etapa === 'existencia') {
     const temCats = (dados.categorias || []).filter(c => c.existencia_atual > 0)
+    const temMov = (dados.categorias || []).filter(c =>
+      (c.entrada_nascimento||0)+(c.entrada_compra||0)+(c.saida_morte||0)+(c.saida_venda||0) > 0
+    )
+    if (temMov.length > 0 && temCats.length === 0) {
+      return '_Registrei as movimentações! Mas preciso do total atual._\n\n🐄 *Quantas cabeças tem ao total em cada categoria?*\nSe não souber, responda *0*.'
+    }
     const jatem = temCats.length > 0 ? '\n\nJá registrei: ' + temCats.map(c => c.item + ' (' + c.existencia_atual + ')').join(', ') : ''
-    return '_Não identifiquei todas as existências._' + jatem + '\n\n🐄 *Continue enviando os dados por categoria.*'
+    return '_Não identifiquei as existências._' + jatem + '\n\n🐄 *Quantas cabeças tem ao total por categoria?*'
   }
 
   if (etapa === 'movimentacoes') {
