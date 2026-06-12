@@ -314,8 +314,10 @@ async function detectarTipoRegistro(texto) {
 // MULTI-AGENTE
 // ════════════════════════════════════════════════════════════════════════════════
 
-async function agentRoteador(texto, contextoUsuario) {
+async function agentRoteador(texto, contextoUsuario, exemplosFewShot) {
   const ctx = contextoUsuario || {}
+  const exemplosStr = (exemplosFewShot || []).map(e => '- "' + e.transcricao + '" → ' + e.intencao).join('\n')
+  const blocoEx = exemplosStr ? '\n\nExemplos de classificações corretas:\n' + exemplosStr : ''
   const prompt = 'Você é o roteador de um sistema de gestão de rebanho bovino.\nAnalise o texto e classifique em UMA das intenções:\n- "mapa": fechamento mensal com totais por categoria\n- "movimentacao": evento pontual (nascimento, morte, compra, venda, transferência, pesagem)\n- "consulta": pergunta sobre o rebanho\n- "cadastro": informação pessoal do usuário\n\nContexto: ' + JSON.stringify(ctx) + '\nTexto: "' + texto + '"\n\nResponda APENAS com JSON: {"intencao":"mapa|movimentacao|consulta|cadastro","confianca":0.9,"motivo":"breve"}'
   try {
     const r = await chamarGroq([
