@@ -98,8 +98,10 @@ async function chamarGroq(mensagens, maxTokens) {
 }
 
 async function extrairDadosRebanho(texto) {
+  const exs = await buscarExemplosExtracao('mapa', 3)
+  const blocoEx = exs.length > 0 ? '\n\nExemplos reais do Grupo Ricci:\n' + exs.map(e => 'Áudio: "' + e.transcricao + '"\nJSON: ' + JSON.stringify(e.saida_json)).join('\n\n') : ''
   const dados = await chamarGroq([
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: SYSTEM_PROMPT + blocoEx },
     { role: 'user', content: `Texto transcrito do áudio (pode ter erros de transcrição):\n\n"${texto}"` },
   ], 4000)
 
@@ -242,8 +244,10 @@ FORMATO DE SAÍDA:
 }`
 
 async function extrairMovimentacao(texto) {
+  const exsMov = await buscarExemplosExtracao('movimentacao', 3)
+  const blocoMov = exsMov.length > 0 ? '\n\nExemplos reais:\n' + exsMov.map(e => 'Áudio: "' + e.transcricao + '"\nJSON: ' + JSON.stringify(e.saida_json)).join('\n\n') : ''
   const dados = await chamarGroq([
-    { role: 'system', content: PROMPT_MOVIMENTACAO },
+    { role: 'system', content: PROMPT_MOVIMENTACAO + blocoMov },
     { role: 'user', content: 'Texto transcrito (pode ter erros): "' + texto + '"' },
   ], 2000)
 
@@ -348,4 +352,30 @@ async function agentConsulta(texto, dadosRebanho) {
   } catch(e) { return 'Não consegui processar sua consulta. Tente novamente.' }
 }
 
-module.exports = { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, agentRoteador, agentConsulta, gerarResumoWhatsApp }
+
+// ─── Few-shot dinâmico ─────────────────────────────────────────────────────────
+let _sbFewShot = null
+function getSbFewShot() {
+  if (!_sbFewShot) {
+    const { createClient } = require('@supabase/supabase-js')
+    const ws = require('ws')
+    _sbFewShot = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, { global: { WebSocket: ws } })
+  }
+  return _sbFewShot
+}
+
+async function buscarExemplosExtracao(tipo, limite) {
+  try {
+    const { data } = await getSbFewShot().from('bot_exemplos_extracao').select('transcricao, saida_json').eq('tipo', tipo).eq('ativo', true).order('criado_em', { ascending: false }).limit(limite || 3)
+    return data || []
+  } catch(e) { return [] }
+}
+
+async function salvarExemploConfirmado(tipo, transcricao, saidaJson, fazenda) {
+  try {
+    await getSbFewShot().from('bot_exemplos_extracao').insert({ tipo, transcricao, saida_json: typeof saidaJson === 'string' ? JSON.parse(saidaJson) : saidaJson, fonte: 'confirmado', fazenda: fazenda || 'Grupo Ricci' })
+    console.log('Exemplo confirmado:', tipo)
+  } catch(e) { console.log('Erro exemplo:', e.message) }
+}
+
+module.exports = { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, agentRoteador, agentConsulta, salvarExemploConfirmado, gerarResumoWhatsApp }
