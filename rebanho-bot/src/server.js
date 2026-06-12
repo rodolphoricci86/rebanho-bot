@@ -834,6 +834,24 @@ app.get('/api/movimentacoes', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+
+app.post('/api/busca', async (req, res) => {
+  try {
+    const { query } = req.body
+    if (!query) return res.status(400).json({ ok: false, error: 'query obrigatória' })
+    const rag = require('./rag')
+    const embedding = await rag.gerarEmbedding(query)
+    const [r1, r2] = await Promise.all([
+      supabase.rpc('buscar_exemplos_similares', { query_embedding: embedding, tipo_filtro: null, limite: 5 }),
+      supabase.rpc('buscar_classificacao_similar', { query_embedding: embedding, limite: 3 }),
+    ])
+    const { agentConsulta } = require('./extracao')
+    const dadosRebanho = await buscarResumoMensal(12)
+    const resposta = await agentConsulta(query, dadosRebanho)
+    res.json({ ok: true, resposta, exemplos_similares: r1.data || [], classificacoes: r2.data || [] })
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 app.get('/api/lotes', async (req, res) => {
   try {
     res.json({ ok: true, data: await buscarResumoPorLote(req.query.fazenda||'Grupo Ricci') })
