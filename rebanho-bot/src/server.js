@@ -336,7 +336,15 @@ async function tratarRespostaSessao(de, textoResposta, dados, etapa) {
     limparSessao(de)
     if (respLower === 'sim' || respLower === 's') {
       registrarFeedback(de, txOrig, intOrig, intOrig).catch(() => {})
-      await processarTexto(de, txOrig, lidOrig)
+      if (dados.dadosPre) {
+        if (intOrig === 'movimentacao') {
+          var movsPre = Array.isArray(dados.dadosPre) ? dados.dadosPre : [dados.dadosPre]
+          for (var mvp of movsPre) await processarMovimentacao(de, mvp, txOrig)
+        } else if (intOrig === 'mapa') {
+          setSessao(de, dados.dadosPre, 'periodo')
+          await processarComplemento(de, txOrig, dados.dadosPre, 'periodo')
+        } else { await processarTexto(de, txOrig, lidOrig) }
+      } else { await processarTexto(de, txOrig, lidOrig) }
     } else {
       var intCorr = intOrig
       if (respLower.includes('mapa') || respLower.includes('fechamento')) intCorr = 'mapa'
@@ -451,7 +459,13 @@ async function processarTexto(de, texto, logId) {
     var confiancaRota = rota.confianca || 1
     if (confiancaRota < 0.7) {
       var LABELS = { mapa:'fechamento mensal', movimentacao:'movimentação pontual', consulta:'consulta', cadastro:'cadastro' }
-      setSessao(de, { _pendente: true, texto: texto, logId: logId, intencao: rota.intencao }, 'confirmar_intencao')
+      // Pré-extrair para não reextrair após confirmação
+      var dadosPre = null
+      try {
+        if (rota.intencao === 'mapa') { dadosPre = await extrairDadosRebanho(texto); dadosPre._transcricaoOriginal = texto }
+        else if (rota.intencao === 'movimentacao') { dadosPre = await extrairMovimentacaoMultipla(texto) }
+      } catch(e) { console.log('Pré-extração:', e.message) }
+      setSessao(de, { _pendente: true, texto: texto, logId: logId, intencao: rota.intencao, dadosPre: dadosPre }, 'confirmar_intencao')
       await enviarMensagem(de, '_Identifiquei como *' + (LABELS[rota.intencao]||rota.intencao) + '* (' + Math.round(confiancaRota*100) + '% de certeza)._\n\n✅ *sim* — confirmar\n❌ *não* — corrija: mapa, movimentação ou consulta')
       return
     }
