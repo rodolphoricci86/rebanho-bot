@@ -169,6 +169,7 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
         if (resposta === 'sim' || resposta === 's' || resposta === 'yes') {
           limparSessao(de)
           responderWhatsApp(res, '_Salvando..._')
+          if (dados.categorias && dados.categorias.length > 0 && dados._transcricaoOriginal) { salvarExemploConfirmado('mapa', dados._transcricaoOriginal, dados, dados.fazenda).catch(() => {}) }
           finalizarSalvamento(de, dados).catch(err =>
             enviarMensagem(de, `Erro ao salvar: ${err.message}`))
         } else if (resposta === 'não' || resposta === 'nao' || resposta === 'n') {
@@ -423,6 +424,7 @@ async function processarTexto(de, texto) {
   }
 
   const dados = await extrairDadosRebanho(texto)
+  dados._transcricaoOriginal = texto
 
   // Se há sessão ativa com dados do mesmo período, mesclar em vez de descartar
   const sessaoAtiva = sessaoAtiva2
