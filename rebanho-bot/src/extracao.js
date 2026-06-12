@@ -218,8 +218,10 @@ CATEGORIAS:
   boi +36m, touro, bezerra 0-2m, bezerra 3-8m, bezerra 9-12m, novilha 13-24m,
   vaca solteira, vaca parida, misto
 
-FORMATO DE SAÍDA:
-{
+IMPORTANTE: Se o texto mencionar MÚLTIPLAS movimentações (ex: compra E venda), retorne um ARRAY com uma entrada para cada movimentação.
+
+FORMATO DE SAÍDA (array, mesmo que seja só uma movimentação):
+[{
   "fazenda": "nome da fazenda ou Grupo Ricci",
   "data_mov": "DD/MM/AAAA ou null",
   "dia": null,
@@ -241,9 +243,9 @@ FORMATO DE SAÍDA:
   "responsavel": "nome do responsável ou null",
   "ocorrencia": "descrição de ocorrência ou null",
   "observacoes": "observações livres ou null"
-}`
+}]`
 
-async function extrairMovimentacao(texto) {
+async function extrairMovimentacaoMultipla(texto) {
   const exsMov = await buscarExemplosExtracao('movimentacao', 3)
   const blocoMov = exsMov.length > 0 ? '\n\nExemplos reais:\n' + exsMov.map(e => 'Áudio: "' + e.transcricao + '"\nJSON: ' + JSON.stringify(e.saida_json)).join('\n\n') : ''
   const dados = await chamarGroq([
@@ -261,8 +263,22 @@ async function extrairMovimentacao(texto) {
     }
   }
 
-  console.log('Movimentação extraída: tipo=' + dados.tipo + ' qty=' + dados.quantidade + ' cat=' + dados.categoria)
-  return dados
+  // Normalizar para array
+  const arr = Array.isArray(dados) ? dados : [dados]
+  arr.forEach(d => {
+    if (d.data_mov && !d.mes) {
+      const p = d.data_mov.match(/(\d{1,2})[\/](\d{1,2})[\/](\d{4})/)
+      if (p) { d.dia = parseInt(p[1]); d.mes = parseInt(p[2]); d.ano = parseInt(p[3]) }
+    }
+    console.log('Movimentação: tipo=' + d.tipo + ' qty=' + d.quantidade + ' cat=' + d.categoria)
+  })
+  return arr
+}
+
+// Manter compatibilidade
+async function extrairMovimentacao(texto) {
+  const arr = await extrairMovimentacaoMultipla(texto)
+  return arr[0] || {}
 }
 
 // ─── Detectar se é registro de movimentação ou mapa de rebanho ────────────────
