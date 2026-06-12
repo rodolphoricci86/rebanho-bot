@@ -261,52 +261,37 @@ async function extrairMovimentacao(texto) {
   return dados
 }
 
-// ─── Detectar se é registro de movimentação ou mapa de rebanho ────────────────
+// ─── Detectar tipo via LLM ────────────────────────────────────────────────────
 async function detectarTipoRegistro(texto) {
-  const lower = texto.toLowerCase()
+  const prompt = `Você é um classificador de mensagens de fazenda.
+Classifique o texto abaixo em UMA dessas categorias:
 
-  // Palavras FORTES de movimentação — 1 já basta
-  const palavrasFortes = [
-    'movimentação', 'movimentacao', 'registrar movimentação', 'registrar a movimentação',
-    'morte de', 'morreram', 'morreu', 'nascimento de', 'nasceu', 'nasceram',
-    'comprei', 'compramos', 'compra de', 'vendi', 'vendemos', 'venda de',
-    'transferência', 'transferencia', 'transferi', 'transferimos',
-    'pesagem', 'pesou', 'pesamos',
-    'responsável', 'responsavel',
-    'baixa de', 'perdemos', 'óbito', 'obito',
-    'saída de', 'saida de', 'entrada de',
-    'desmamou', 'desmama de',
-  ]
+- "movimentacao": registro de evento pontual (nascimento, morte, compra, venda, transferência, pesagem, desmama, entrada ou saída de animais)
+- "mapa": fechamento mensal do rebanho com totais por categoria
 
-  // Palavras FRACAS de movimentação — precisam de 2+
-  const palavrasFracas = [
-    'registrar', 'nascimento', 'morte', 'compra', 'venda',
-    'transferiu', 'foi para', 'veio de', 'chegou', 'saiu',
-    'brinco', 'pasto', 'lote', 'curral',
-  ]
+Responda APENAS com a palavra: movimentacao  OU  mapa
 
-  // Palavras que indicam MAPA MENSAL
-  const palavrasMapa = [
-    'mapa', 'fechamento', 'existência', 'existencia', 'rebanho do mês',
-    'cabeças ao total', 'total de cabeças',
-    'bezerros são', 'garrotes são', 'vacas paridas', 'vacas solteiras',
-    'de 0 a', 'de 8 a', 'de 13 a', 'de 25 a',
-  ]
+Texto: "${texto}"`
 
-  const temForte  = palavrasFortes.filter(p => lower.includes(p)).length
-  const temFraco  = palavrasFracas.filter(p => lower.includes(p)).length
-  const temMapa   = palavrasMapa.filter(p => lower.includes(p)).length
-
-  // Forte: 1 palavra forte já classifica como movimentação
-  if (temForte >= 1 && temMapa === 0) return 'movimentacao'
-  // Fraco: 2+ palavras fracas sem palavras de mapa
-  if (temFraco >= 2 && temMapa === 0) return 'movimentacao'
-  // Mapa explícito
-  if (temMapa >= 1 && temForte === 0) return 'mapa'
-  // Empate ou dúvida: se tem responsável/data = movimentação
-  if (lower.includes('responsável') || lower.includes('responsavel')) return 'movimentacao'
-
-  return 'mapa'
+  try {
+    const dados = await chamarGroq([
+      { role: 'system', content: 'Você é um classificador. Responda apenas com uma palavra: movimentacao ou mapa.' },
+      { role: 'user', content: prompt }
+    ], 10)
+    const tipo = (dados || '').toString().trim().toLowerCase().replace(/[^a-z]/g, '')
+    console.log('Tipo detectado pelo LLM:', tipo, '| texto:', texto.substring(0, 60))
+    if (tipo.includes('movimentacao') || tipo.includes('movimentação')) return 'movimentacao'
+    return 'mapa'
+  } catch(e) {
+    console.log('Erro no detector LLM, usando fallback:', e.message)
+    // Fallback por palavras-chave
+    const lower = texto.toLowerCase()
+    const movWords = ['responsável','responsavel','nascimento','morte','compra','venda','transferência','transferencia','pesagem','desmamou','nasceu','morreu','compramos','vendemos']
+    const mapaWords = ['mapa','fechamento','existência','existencia','rebanho do mês','total de cabeças']
+    const sMov = movWords.filter(p => lower.includes(p)).length
+    const sMapa = mapaWords.filter(p => lower.includes(p)).length
+    return sMov > sMapa ? 'movimentacao' : 'mapa'
+  }
 }
 
 module.exports = { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, gerarResumoWhatsApp }
