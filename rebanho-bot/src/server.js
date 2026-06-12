@@ -6,7 +6,7 @@ const twilio = require('twilio')
 const path = require('path')
 const { createClient } = require('@supabase/supabase-js')
 const { transcreverAudio } = require('./transcricao')
-const { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, agentRoteador, agentConsulta, gerarResumoWhatsApp } = require('./extracao')
+const { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, gerarResumoWhatsApp } = require('./extracao')
 const { salvarRebanho, buscarResumoMensal, buscarResumoPorLote } = require('./supabase')
 
 const app = express()
@@ -401,24 +401,14 @@ async function processarTexto(de, texto) {
   const jaTemSessao = sessaoAtiva2 && sessaoAtiva2.dados && !sessaoAtiva2.dados._cadastro
 
   if (!jaTemSessao) {
-    const usuario = await obterOuCriarUsuario(de)
-    const ctx = { fazenda: usuario?.fazenda || 'Grupo Ricci', funcao: usuario?.funcao }
-    const rota = await agentRoteador(texto, ctx)
-
-    if (rota.intencao === 'movimentacao') {
-      console.log('Roteador → MOVIMENTAÇÃO')
+    const tipo = await detectarTipoRegistro(texto)
+    if (tipo === 'movimentacao') {
+      console.log('Detectado: MOVIMENTAÇÃO')
       const mov = await extrairMovimentacao(texto)
       await processarMovimentacao(de, mov, texto)
       return
     }
-    if (rota.intencao === 'consulta') {
-      console.log('Roteador → CONSULTA')
-      const dadosRebanho = await buscarResumoMensal(6)
-      const resposta = await agentConsulta(texto, dadosRebanho)
-      await enviarMensagem(de, resposta)
-      return
-    }
-    console.log('Roteador → MAPA')
+    console.log('Detectado: MAPA MENSAL')
   }
 
   const dados = await extrairDadosRebanho(texto)
@@ -530,6 +520,39 @@ function mesclarDados(base, complemento) {
   return merged
 }
 
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MEMÓRIA DE CONTEXTO
+// ════════════════════════════════════════════════════════════════════════════════
+
+async function obterContextoUsuario(whatsapp) {
+  try {
+    const usuario = await obterOuCriarUsuario(whatsapp)
+    const historico = JSON.parse(usuario.contexto_json || '[]')
+    return {
+      nome: usuario.nome, funcao: usuario.funcao,
+      fazenda: usuario.fazenda, lotes: usuario.lotes_cuida,
+      historico: historico.slice(0,3),
+      ultimaFazenda: historico[0]?.fazenda || usuario.fazenda || 'Grupo Ricci',
+    }
+  } catch(e) { return { fazenda: 'Grupo Ricci', historico: [] } }
+}
+
+async function atualizarContextoUsuario(whatsapp, dados) {
+  try {
+    const usuario = await obterOuCriarUsuario(whatsapp)
+    const historico = JSON.parse(usuario.contexto_json || '[]')
+    historico.unshift({ ts: new Date().toISOString(), tipo: dados._tipoRegistro || 'mapa', fazenda: dados.fazenda, mes: dados.mes, ano: dados.ano })
+    const updates = {
+      ultima_atividade: new Date().toISOString(),
+      total_envios: (usuario.total_envios || 0) + 1,
+      contexto_json: JSON.stringify(historico.slice(0,10)),
+    }
+    if (dados.fazenda && dados.fazenda !== 'Grupo Ricci') updates.fazenda = dados.fazenda
+    await supabase.from('usuarios').update(updates).eq('whatsapp', whatsapp)
+  } catch(e) { console.log('Erro contexto:', e.message) }
+}
 
 // ─── Processar movimentação pontual ──────────────────────────────────────────
 async function processarMovimentacao(de, mov, textoOriginal) {
