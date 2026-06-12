@@ -6,7 +6,7 @@ const twilio = require('twilio')
 const path = require('path')
 const { createClient } = require('@supabase/supabase-js')
 const { transcreverAudio } = require('./transcricao')
-const { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, gerarResumoWhatsApp } = require('./extracao')
+const { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, extrairMovimentacaoMultipla, detectarTipoRegistro, agentRoteador, agentConsulta, salvarExemploConfirmado, gerarResumoWhatsApp } = require('./extracao')
 const { salvarRebanho, buscarResumoMensal, buscarResumoPorLote } = require('./supabase')
 
 const app = express()
@@ -413,14 +413,22 @@ async function processarTexto(de, texto) {
   const jaTemSessao = sessaoAtiva2 && sessaoAtiva2.dados && !sessaoAtiva2.dados._cadastro
 
   if (!jaTemSessao) {
-    const tipo = await detectarTipoRegistro(texto)
-    if (tipo === 'movimentacao') {
-      console.log('Detectado: MOVIMENTAÇÃO')
-      const mov = await extrairMovimentacao(texto)
-      await processarMovimentacao(de, mov, texto)
+    const ctx = await obterContextoUsuario(de)
+    const exemplos = await buscarExemplosFewShot(6)
+    const rota = await agentRoteador(texto, ctx, exemplos)
+    ultimaClassificacao[de] = { intencao: rota.intencao, transcricao: texto }
+    if (rota.intencao === 'movimentacao') {
+      console.log('Roteador → MOVIMENTAÇÃO')
+      const movs = await extrairMovimentacaoMultipla(texto)
+      for (const mov of movs) { await processarMovimentacao(de, mov, texto) }
       return
     }
-    console.log('Detectado: MAPA MENSAL')
+    if (rota.intencao === 'consulta') {
+      const dr = await buscarResumoMensal(6)
+      await enviarMensagem(de, await agentConsulta(texto, dr))
+      return
+    }
+    console.log('Roteador → MAPA')
   }
 
   const dados = await extrairDadosRebanho(texto)
