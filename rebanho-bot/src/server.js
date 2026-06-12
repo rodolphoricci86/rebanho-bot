@@ -218,8 +218,9 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
     // ── Áudio novo ──
     if (parseInt(numMedia) > 0 && mediaType?.startsWith('audio')) {
       saudarSeNecessario(de).catch(() => {})
+      const logId = await criarLog(de, 'audio', { mediaUrl })
       responderWhatsApp(res, '_Recebi seu áudio! Transcrevendo e processando..._')
-      processarAudio(de, mediaUrl).catch(err => {
+      processarAudio(de, mediaUrl, logId).catch(err => {
         console.error('Erro áudio:', err)
         enviarMensagem(de, `Erro: ${err.message}. Tente novamente.`)
       })
@@ -228,8 +229,9 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
 
     // ── Texto longo novo ──
     if (corpo && corpo.trim().length > 20) {
+      const logIdTxt = await criarLog(de, 'texto', { texto: corpo })
       responderWhatsApp(res, '_Processando..._')
-      processarTexto(de, corpo).catch(err =>
+      processarTexto(de, corpo, logIdTxt).catch(err =>
         enviarMensagem(de, `Erro: ${err.message}`))
       return
     }
@@ -403,14 +405,14 @@ async function tratarRespostaSessao(de, textoResposta, dados, etapa) {
 }
 
 // ─── Processamento principal ──────────────────────────────────────────────────
-async function processarAudio(de, mediaUrl) {
+async function processarAudio(de, mediaUrl, logId) {
   const texto = await transcreverAudio(mediaUrl,
     process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
   console.log('Transcrição:', texto.substring(0, 150))
   await processarTexto(de, texto)
 }
 
-async function processarTexto(de, texto) {
+async function processarTexto(de, texto, logId) {
   // Detectar se é movimentação pontual ou mapa mensal
   const sessaoAtiva2 = sessoes[de]
   const jaTemSessao = sessaoAtiva2 && sessaoAtiva2.dados && !sessaoAtiva2.dados._cadastro
@@ -420,6 +422,7 @@ async function processarTexto(de, texto) {
     const exemplos = await buscarExemplosFewShot(6)
     const rota = await agentRoteador(texto, ctx, exemplos)
     ultimaClassificacao[de] = { intencao: rota.intencao, transcricao: texto }
+    atualizarLog(logId, { intencao_detectada: rota.intencao, confianca: rota.confianca, status: 'processando' }).catch(() => {})
     if (rota.intencao === 'movimentacao') {
       console.log('Roteador → MOVIMENTAÇÃO')
       const movs = await extrairMovimentacaoMultipla(texto)
@@ -699,6 +702,23 @@ async function saudarSeNecessario(de) {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// LOG DE MENSAGENS
+// ═══════════════════════════════════════════════════════════════
+
+async function criarLog(whatsapp, tipo, dados) {
+  try {
+    const { data } = await supabase.from('bot_logs').insert({ whatsapp, tipo, texto_original: dados.texto||null, media_url: dados.mediaUrl||null, status: 'recebido', recebido_em: new Date().toISOString() }).select('id').single()
+    return data?.id || null
+  } catch(e) { return null }
+}
+
+async function atualizarLog(logId, updates) {
+  if (!logId) return
+  try { await supabase.from('bot_logs').update({ ...updates, processado_em: new Date().toISOString() }).eq('id', logId) } catch(e) {}
+}
+
 // ─── Processar movimentação pontual ──────────────────────────────────────────
 async function processarMovimentacao(de, mov, textoOriginal) {
   const faltando = []
@@ -906,6 +926,26 @@ app.get('/api/anomalias', async (req, res) => {
       return res.json({ ok: true, data: anomalias })
     }
     const { data } = await supabase.from('bot_anomalias').select('*').eq('fazenda', fazenda).eq('resolvido', false).order('detectado_em', { ascending: false })
+    res.json({ ok: true, data: data || [] })
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
+
+app.get('/api/logs', async (req, res) => {
+  try {
+    const { limite = 50, status } = req.query
+    let q = supabase.from('bot_logs').select('id,whatsapp,tipo,transcricao,texto_original,intencao_detectada,confianca,status,erro,salvo,recebido_em').order('recebido_em', { ascending: false }).limit(parseInt(limite))
+    if (status) q = q.eq('status', status)
+    const { data, error } = await q
+    if (error) throw new Error(error.message)
+    res.json({ ok: true, data: data || [] })
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
+app.get('/api/qualidade', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('vw_qualidade_bot').select('*').limit(30)
+    if (error) throw new Error(error.message)
     res.json({ ok: true, data: data || [] })
   } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
 })
