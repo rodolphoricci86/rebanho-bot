@@ -852,6 +852,20 @@ app.post('/api/busca', async (req, res) => {
   } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+
+app.get('/api/anomalias', async (req, res) => {
+  try {
+    const { fazenda = 'Grupo Ricci', forcar = 'false' } = req.query
+    const { analisarRebanho } = require('./anomalias')
+    if (forcar === 'true') {
+      const anomalias = await analisarRebanho(fazenda)
+      return res.json({ ok: true, data: anomalias })
+    }
+    const { data } = await supabase.from('bot_anomalias').select('*').eq('fazenda', fazenda).eq('resolvido', false).order('detectado_em', { ascending: false })
+    res.json({ ok: true, data: data || [] })
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 app.get('/api/lotes', async (req, res) => {
   try {
     res.json({ ok: true, data: await buscarResumoPorLote(req.query.fazenda||'Grupo Ricci') })
@@ -874,5 +888,6 @@ app.listen(PORT, () => {
   console.log(`Servidor na porta ${PORT}`)
   setTimeout(() => {
     getRag().indexarExemplosPendentes().catch(e => console.log('RAG indexação:', e.message))
+    setTimeout(function() { require('./anomalias').analisarRebanho('Grupo Ricci').catch(function(){}) }, 20000)
   }, 10000)
 })
