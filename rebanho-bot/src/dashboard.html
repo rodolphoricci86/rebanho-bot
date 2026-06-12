@@ -124,6 +124,13 @@
   .hist-dia-row td { font-size: 12px; border-bottom: 1px solid var(--bg); }
   .sem-dias { text-align:center; color: var(--muted); font-size: 11px; font-style: italic; }
 
+
+  .mov-badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600; }
+  .mov-entrada { background:#e6f4ea; color:#1e7e34; }
+  .mov-saida   { background:#fdecea; color:#c62828; }
+  .mov-transf  { background:#e8f0fe; color:#1a56db; }
+  .mov-peso    { background:#fff3e0; color:#e65100; }
+
   .sem-dados { text-align: center; padding: 40px; color: var(--muted); font-size: 13px; }
 </style>
 </head>
@@ -154,6 +161,7 @@
   <div id="movCards" class="mov-grid"></div>
   <div id="tabelaCat" class="table-card"></div>
   <div id="historico" class="hist-table" style="margin-top:24px"></div>
+  <div id="movimentacoes" class="hist-table" style="margin-top:24px"></div>
 </div>
 
 <script>
@@ -185,6 +193,7 @@ async function carregar() {
     renderTabelaCat(dadosGlobais[0])
     renderHistorico(dadosGlobais)
     atualizarEstilos()
+    try { var rMov = await fetch(API + '/api/movimentacoes?limite=50'); var jMov = await rMov.json(); renderMovimentacoes(jMov.data || []) } catch(_) {}
     document.getElementById('ultima-att').textContent = `Atualizado: ${new Date().toLocaleTimeString('pt-BR')}`
   } catch(e) {
     document.getElementById('kpis').innerHTML = `<div class="erro">Erro: ${e.message}</div>`
@@ -516,6 +525,40 @@ document.addEventListener('click', function(e) {
   renderTabelaCat(dadosGlobais[0])
   atualizarEstilos()
 })
+
+function renderMovimentacoes(dados) {
+  var el = document.getElementById('movimentacoes')
+  if (!el) return
+  if (!dados || dados.length === 0) {
+    el.innerHTML = '<div class="hist-table-header"><h2>Movimentações Recentes</h2></div><div class="sem-dados">Nenhuma movimentação registrada ainda.</div>'
+    return
+  }
+  var LABEL = {entrada_compra:'Compra',saida_venda:'Venda',entrada_transferencia:'Transferência',saida_transferencia:'Transferência',saida_morte:'Morte',entrada_nascimento:'Nascimento',entrada_desmama:'Desmama',saida_desmama:'Desmama',pesagem:'Pesagem'}
+  var CLS = {entrada_compra:'mov-entrada',entrada_nascimento:'mov-entrada',entrada_desmama:'mov-entrada',entrada_transferencia:'mov-transf',saida_venda:'mov-saida',saida_morte:'mov-saida',saida_desmama:'mov-saida',saida_transferencia:'mov-transf',pesagem:'mov-peso'}
+  var linhas = dados.map(function(m) {
+    var tipo = LABEL[m.tipo] || m.tipo || '-'
+    var cls  = CLS[m.tipo] || 'mov-transf'
+    var data = m.data_mov ? new Date(m.data_mov + 'T12:00:00').toLocaleDateString('pt-BR') : '-'
+    var obs  = m.observacoes || ''
+    var cat  = (obs.match(/Cat: ([^|]+)/) || [])[1] || '-'
+    var resp = (obs.match(/Resp: ([^|]+)/) || [])[1] || ''
+    var orig = (obs.match(/Origem: ([^|]+)/) || [])[1] || ''
+    var dest = (obs.match(/Destino: ([^|]+)/) || [])[1] || ''
+    return '<tr>' +
+      '<td>' + data.trim() + '</td>' +
+      '<td><span class="mov-badge ' + cls + '">' + tipo + '</span></td>' +
+      '<td>' + (m.quantidade || '-') + '</td>' +
+      '<td>' + cat.trim() + '</td>' +
+      '<td style="font-size:11px">' + orig.trim() + (dest.trim() ? ' &rarr; ' + dest.trim() : '') + '</td>' +
+      '<td style="color:var(--muted);font-size:11px">' + resp.trim() + '</td>' +
+      '</tr>'
+  }).join('')
+  el.innerHTML = '<div class="hist-table-header"><h2>Movimentações Recentes <span style="font-size:11px;color:var(--muted);font-weight:400">— últimas 50</span></h2></div>' +
+    '<div style="overflow-x:auto"><table>' +
+    '<thead><tr><th>Data</th><th>Tipo</th><th>Qtd</th><th>Categoria</th><th>Origem / Destino</th><th>Responsável</th></tr></thead>' +
+    '<tbody>' + linhas + '</tbody></table></div>'
+}
+
 
 carregar()
 
