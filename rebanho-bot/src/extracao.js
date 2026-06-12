@@ -261,37 +261,89 @@ async function extrairMovimentacao(texto) {
   return dados
 }
 
-// ─── Detectar tipo via LLM ────────────────────────────────────────────────────
+// ─── Detectar se é registro de movimentação ou mapa de rebanho ────────────────
 async function detectarTipoRegistro(texto) {
-  const prompt = `Você é um classificador de mensagens de fazenda.
-Classifique o texto abaixo em UMA dessas categorias:
+  const lower = texto.toLowerCase()
 
-- "movimentacao": registro de evento pontual (nascimento, morte, compra, venda, transferência, pesagem, desmama, entrada ou saída de animais)
-- "mapa": fechamento mensal do rebanho com totais por categoria
+  // Palavras FORTES de movimentação — 1 já basta
+  const palavrasFortes = [
+    'movimentação', 'movimentacao', 'registrar movimentação', 'registrar a movimentação',
+    'morte de', 'morreram', 'morreu', 'nascimento de', 'nasceu', 'nasceram',
+    'comprei', 'compramos', 'compra de', 'vendi', 'vendemos', 'venda de',
+    'transferência', 'transferencia', 'transferi', 'transferimos',
+    'pesagem', 'pesou', 'pesamos',
+    'responsável', 'responsavel',
+    'baixa de', 'perdemos', 'óbito', 'obito',
+    'saída de', 'saida de', 'entrada de',
+    'desmamou', 'desmama de',
+  ]
 
-Responda APENAS com a palavra: movimentacao  OU  mapa
+  // Palavras FRACAS de movimentação — precisam de 2+
+  const palavrasFracas = [
+    'registrar', 'nascimento', 'morte', 'compra', 'venda',
+    'transferiu', 'foi para', 'veio de', 'chegou', 'saiu',
+    'brinco', 'pasto', 'lote', 'curral',
+  ]
 
-Texto: "${texto}"`
+  // Palavras que indicam MAPA MENSAL
+  const palavrasMapa = [
+    'mapa', 'fechamento', 'existência', 'existencia', 'rebanho do mês',
+    'cabeças ao total', 'total de cabeças',
+    'bezerros são', 'garrotes são', 'vacas paridas', 'vacas solteiras',
+    'de 0 a', 'de 8 a', 'de 13 a', 'de 25 a',
+  ]
 
+  const temForte  = palavrasFortes.filter(p => lower.includes(p)).length
+  const temFraco  = palavrasFracas.filter(p => lower.includes(p)).length
+  const temMapa   = palavrasMapa.filter(p => lower.includes(p)).length
+
+  // Forte: 1 palavra forte já classifica como movimentação
+  if (temForte >= 1 && temMapa === 0) return 'movimentacao'
+  // Fraco: 2+ palavras fracas sem palavras de mapa
+  if (temFraco >= 2 && temMapa === 0) return 'movimentacao'
+  // Mapa explícito
+  if (temMapa >= 1 && temForte === 0) return 'mapa'
+  // Empate ou dúvida: se tem responsável/data = movimentação
+  if (lower.includes('responsável') || lower.includes('responsavel')) return 'movimentacao'
+
+  return 'mapa'
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MULTI-AGENTE
+// ════════════════════════════════════════════════════════════════════════════════
+
+async function agentRoteador(texto, contextoUsuario) {
+  const ctx = contextoUsuario || {}
+  const prompt = 'Você é o roteador de um sistema de gestão de rebanho bovino.\nAnalise o texto e classifique em UMA das intenções:\n- "mapa": fechamento mensal com totais por categoria\n- "movimentacao": evento pontual (nascimento, morte, compra, venda, transferência, pesagem)\n- "consulta": pergunta sobre o rebanho\n- "cadastro": informação pessoal do usuário\n\nContexto: ' + JSON.stringify(ctx) + '\nTexto: "' + texto + '"\n\nResponda APENAS com JSON: {"intencao":"mapa|movimentacao|consulta|cadastro","confianca":0.9,"motivo":"breve"}'
   try {
-    const dados = await chamarGroq([
-      { role: 'system', content: 'Você é um classificador. Responda apenas com uma palavra: movimentacao ou mapa.' },
+    const r = await chamarGroq([
+      { role: 'system', content: 'Classificador JSON. Responda apenas com JSON válido sem markdown.' },
       { role: 'user', content: prompt }
-    ], 10)
-    const tipo = (dados || '').toString().trim().toLowerCase().replace(/[^a-z]/g, '')
-    console.log('Tipo detectado pelo LLM:', tipo, '| texto:', texto.substring(0, 60))
-    if (tipo.includes('movimentacao') || tipo.includes('movimentação')) return 'movimentacao'
-    return 'mapa'
+    ], 100)
+    const parsed = JSON.parse((r||'').toString().trim().replace(/```json|```/g,''))
+    console.log('Roteador:', parsed.intencao, '(' + Math.round((parsed.confianca||0)*100) + '%) -', parsed.motivo)
+    return parsed
   } catch(e) {
-    console.log('Erro no detector LLM, usando fallback:', e.message)
-    // Fallback por palavras-chave
-    const lower = texto.toLowerCase()
-    const movWords = ['responsável','responsavel','nascimento','morte','compra','venda','transferência','transferencia','pesagem','desmamou','nasceu','morreu','compramos','vendemos']
-    const mapaWords = ['mapa','fechamento','existência','existencia','rebanho do mês','total de cabeças']
-    const sMov = movWords.filter(p => lower.includes(p)).length
-    const sMapa = mapaWords.filter(p => lower.includes(p)).length
-    return sMov > sMapa ? 'movimentacao' : 'mapa'
+    console.log('Roteador fallback:', e.message)
+    const tipo = await detectarTipoRegistro(texto)
+    return { intencao: tipo, confianca: 0.6, motivo: 'fallback' }
   }
 }
 
-module.exports = { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, gerarResumoWhatsApp }
+async function agentConsulta(texto, dadosRebanho) {
+  const resumo = (dadosRebanho||[]).slice(0,6).map(d =>
+    d.mes+'/'+d.ano+': '+d.total_rebanho+' cab ('+d.total_machos+'M/'+d.total_femeas+'F, mortes:'+d.total_mortes+')'
+  ).join(', ')
+  const prompt = 'Você é assistente de pecuária bovina do Grupo Ricci. Responda de forma direta e amigável em português.\n\nDados do rebanho: ' + (resumo||'sem dados') + '\n\nPergunta: "' + texto + '"'
+  try {
+    const r = await chamarGroq([
+      { role: 'system', content: 'Assistente de pecuária. Responda direto e amigável.' },
+      { role: 'user', content: prompt }
+    ], 300)
+    return (r||'').toString().trim()
+  } catch(e) { return 'Não consegui processar sua consulta. Tente novamente.' }
+}
+
+module.exports = { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, agentRoteador, agentConsulta, gerarResumoWhatsApp }
