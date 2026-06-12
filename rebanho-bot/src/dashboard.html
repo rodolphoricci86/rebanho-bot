@@ -215,7 +215,19 @@
   <div class="chart-card" style="margin-bottom:24px"><h2>Movimentações Mensais</h2><canvas id="chartMov" style="max-height:200px"></canvas></div>
   <div id="movCards" class="mov-grid"></div>
   <div id="tabelaCat" class="table-card"></div>
-  <div id="historico" class="hist-table" style="margin-top:24px"></div>
+  
+  <div id="finetuning-section" class="hist-table" style="margin-top:24px">
+    <div class="hist-table-header" style="display:flex;align-items:center;justify-content:space-between">
+      <h2>🧠 Fine-tuning</h2>
+      <div style="display:flex;gap:8px">
+        <button onclick="verStatsFinetuning()" style="font-size:12px;padding:6px 14px;background:var(--card);color:var(--verde);border:2px solid var(--verde);border-radius:8px;cursor:pointer">📊 Ver stats</button>
+        <button onclick="exportarFinetuning()" id="btnExportar" style="font-size:12px;padding:6px 14px;background:var(--verde);color:#fff;border:none;border-radius:8px;cursor:pointer">⬇️ Exportar JSONL</button>
+      </div>
+    </div>
+    <div id="finetuning-stats" style="padding:12px 0;font-size:13px;color:var(--muted)">Clique em "Ver stats" para verificar quantos exemplos confirmados temos para fine-tuning.</div>
+  </div>
+
+<div id="historico" class="hist-table" style="margin-top:24px"></div>
   <div id="movimentacoes" class="hist-table" style="margin-top:24px"></div>
 </div>
 
@@ -611,6 +623,41 @@ document.addEventListener('click', function(e) {
   renderTabelaCat(dadosGlobais[0])
   atualizarEstilos()
 })
+
+async function verStatsFinetuning() {
+  var el = document.getElementById('finetuning-stats')
+  el.innerHTML = '<em style="color:var(--muted)">Carregando...</em>'
+  try {
+    var r = await fetch(API + '/api/exportar-finetuning/stats')
+    var j = await r.json()
+    if (!j.ok) throw new Error(j.error)
+    var d = j.data
+    var cor = d.total < 10 ? '#c62828' : d.total < 50 ? '#e65100' : '#1e7e34'
+    var html = '<div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">'
+    html += '<div><span style="font-size:28px;font-weight:700;color:'+cor+'">'+d.total+'</span><br><span style="font-size:11px;color:var(--muted)">exemplos confirmados</span></div>'
+    Object.entries(d.por_tipo||{}).forEach(function(kv) { html += '<div><span style="font-size:20px;font-weight:600;color:var(--verde)">'+kv[1]+'</span><br><span style="font-size:11px;color:var(--muted)">'+kv[0]+'</span></div>' })
+    html += '</div>'
+    html += '<div style="margin-top:10px;padding:10px;background:var(--bg);border-radius:8px;font-size:13px">'+d.recomendacao+'</div>'
+    if (d.pronto) html += '<div style="margin-top:8px;font-size:12px;color:var(--muted)">Para fazer o fine-tuning: exporte o JSONL → <a href="https://platform.openai.com/finetune" target="_blank" style="color:var(--verde)">platform.openai.com/finetune</a> → crie um novo job.</div>'
+    el.innerHTML = html
+  } catch(e) { el.innerHTML = '<span style="color:#c62828">Erro: '+e.message+'</span>' }
+}
+
+async function exportarFinetuning() {
+  var btn = document.getElementById('btnExportar')
+  btn.disabled = true; btn.textContent = '⏳ Exportando...'
+  try {
+    var r = await fetch(API + '/api/exportar-finetuning?minimo=1')
+    if (!r.ok) { var j = await r.json(); throw new Error(j.error||'Erro') }
+    var total = r.headers.get('X-Total-Exemplos')||'?'
+    var blob = await r.blob()
+    var url = URL.createObjectURL(blob)
+    var a = document.createElement('a'); a.href = url; a.download = 'finetuning_'+new Date().toISOString().substring(0,10)+'.jsonl'; a.click()
+    URL.revokeObjectURL(url)
+    btn.textContent = '✅ Exportado ('+total+' exemplos)'
+    setTimeout(function() { btn.disabled=false; btn.textContent='⬇️ Exportar JSONL' }, 3000)
+  } catch(e) { alert('Erro: '+e.message); btn.disabled=false; btn.textContent='⬇️ Exportar JSONL' }
+}
 
 async function executarBusca() {
   var input = document.getElementById('buscaInput')
