@@ -172,6 +172,7 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
           limparSessao(de)
           responderWhatsApp(res, '_Salvando..._')
           if (dados.categorias && dados.categorias.length > 0 && dados._transcricaoOriginal) { salvarExemploConfirmado('mapa', dados._transcricaoOriginal, dados, dados.fazenda).catch(() => {}) }
+          comprimirMemoriaUsuario(de).catch(() => {})
           finalizarSalvamento(de, dados).catch(err =>
             enviarMensagem(de, `Erro ao salvar: ${err.message}`))
         } else if (resposta === 'não' || resposta === 'nao' || resposta === 'n') {
@@ -415,7 +416,7 @@ async function processarTexto(de, texto) {
   const jaTemSessao = sessaoAtiva2 && sessaoAtiva2.dados && !sessaoAtiva2.dados._cadastro
 
   if (!jaTemSessao) {
-    const ctx = await obterContextoUsuario(de)
+    const ctx = await obterMemoriaUsuario(de)
     const exemplos = await buscarExemplosFewShot(6)
     const rota = await agentRoteador(texto, ctx, exemplos)
     ultimaClassificacao[de] = { intencao: rota.intencao, transcricao: texto }
@@ -614,6 +615,49 @@ function detectarCorrecao(texto) {
     }
   }
   return null
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MEMÓRIA LONGA COM COMPRESSÃO
+// ════════════════════════════════════════════════════════════════════════════════
+
+async function comprimirMemoriaUsuario(whatsapp) {
+  try {
+    const usuario = await obterOuCriarUsuario(whatsapp)
+    const historico = JSON.parse(usuario.contexto_json || '[]')
+    if (historico.length < 5) return usuario.memoria_comprimida || null
+    const axios = require('axios')
+    const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model: 'gpt-4o-mini', max_tokens: 200,
+      messages: [
+        { role: 'system', content: 'Crie um resumo compacto (máximo 150 palavras) do perfil deste usuário de sistema de gestão de rebanho bovino. Seja direto e factual.' },
+        { role: 'user', content: 'Nome: ' + (usuario.nome||'?') + '\nFunção: ' + (usuario.funcao||'?') + '\nFazenda: ' + (usuario.fazenda||'Grupo Ricci') + '\nLotes: ' + (usuario.lotes_cuida||'?') + '\nTotal envios: ' + (usuario.total_envios||0) + '\nHistórico: ' + JSON.stringify(historico.slice(0,8)) }
+      ]
+    }, { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 15000 })
+    const memoria = resp.data.choices[0].message.content.trim()
+    await supabase.from('usuarios').update({ memoria_comprimida: memoria, memoria_atualizada_em: new Date().toISOString() }).eq('whatsapp', whatsapp)
+    console.log('Memória comprimida:', whatsapp, memoria.length + ' chars')
+    return memoria
+  } catch(e) { console.log('Erro memória:', e.message); return null }
+}
+
+async function obterMemoriaUsuario(whatsapp) {
+  try {
+    const usuario = await obterOuCriarUsuario(whatsapp)
+    const historico = JSON.parse(usuario.contexto_json || '[]')
+    const agora = new Date()
+    const ultimaAtt = usuario.memoria_atualizada_em ? new Date(usuario.memoria_atualizada_em) : null
+    const horas = ultimaAtt ? (agora - ultimaAtt) / 3600000 : 999
+    if (historico.length >= 5 && horas > 24) comprimirMemoriaUsuario(whatsapp).catch(() => {})
+    return {
+      nome: usuario.nome, funcao: usuario.funcao,
+      fazenda: usuario.fazenda, lotes: usuario.lotes_cuida,
+      resumo: usuario.memoria_comprimida || null,
+      historico: historico.slice(0, 3),
+      ultimaFazenda: historico[0]?.fazenda || usuario.fazenda || 'Grupo Ricci',
+    }
+  } catch(e) { return { fazenda: 'Grupo Ricci', historico: [] } }
 }
 
 // ─── Saudação personalizada ────────────────────────────────────────────────────
