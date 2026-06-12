@@ -983,6 +983,39 @@ app.get('/api/qualidade', async (req, res) => {
   } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+
+app.get('/api/exportar-finetuning', async (req, res) => {
+  try {
+    const { minimo = 10 } = req.query
+    const { data: exemplos } = await supabase.from('bot_exemplos_extracao').select('transcricao, saida_json, tipo').eq('ativo', true).not('saida_json', 'is', null).order('criado_em', { ascending: false }).limit(500)
+    if (!exemplos || exemplos.length < parseInt(minimo)) return res.json({ ok: false, error: 'Poucos exemplos (' + (exemplos?.length||0) + '). Minimo: ' + minimo })
+    const SYSTEM_MAPA = 'Você é especialista em pecuária. Extraia dados do mapa de rebanho do texto e retorne APENAS JSON válido.'
+    const SYSTEM_MOV  = 'Você é especialista em pecuária. Extraia dados de movimentação do texto e retorne APENAS JSON válido como array.'
+    const linhas = exemplos.map(function(ex) {
+      return JSON.stringify({ messages: [{ role:'system', content: ex.tipo==='movimentacao'?SYSTEM_MOV:SYSTEM_MAPA }, { role:'user', content:'Texto: "'+ex.transcricao+'"' }, { role:'assistant', content: JSON.stringify(ex.saida_json) }] })
+    })
+    const porTipo = {}; exemplos.forEach(function(e) { porTipo[e.tipo]=(porTipo[e.tipo]||0)+1 })
+    res.setHeader('Content-Type','application/jsonl')
+    res.setHeader('Content-Disposition','attachment; filename="finetuning_'+new Date().toISOString().substring(0,10)+'.jsonl"')
+    res.setHeader('X-Total-Exemplos', exemplos.length)
+    res.setHeader('X-Por-Tipo', JSON.stringify(porTipo))
+    res.send(linhas.join('\n'))
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
+app.get('/api/exportar-finetuning/stats', async (req, res) => {
+  try {
+    const { data: exemplos } = await supabase.from('bot_exemplos_extracao').select('tipo, fonte').eq('ativo', true)
+    const stats = { total: exemplos?.length||0, por_tipo:{}, por_fonte:{}, pronto:false, recomendacao:'' }
+    ;(exemplos||[]).forEach(function(e) { stats.por_tipo[e.tipo]=(stats.por_tipo[e.tipo]||0)+1; stats.por_fonte[e.fonte]=(stats.por_fonte[e.fonte]||0)+1 })
+    stats.pronto = stats.total >= 10
+    if (stats.total < 10) stats.recomendacao = 'Precisa de mais '+(10-stats.total)+' exemplos. Continue confirmando com "sim" no bot.'
+    else if (stats.total < 50) stats.recomendacao = stats.total+' exemplos — fine-tuning básico possível. Ideal: 50+.'
+    else stats.recomendacao = stats.total+' exemplos — pronto para fine-tuning de qualidade!'
+    res.json({ ok: true, data: stats })
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 app.get('/api/lotes', async (req, res) => {
   try {
     res.json({ ok: true, data: await buscarResumoPorLote(req.query.fazenda||'Grupo Ricci') })
