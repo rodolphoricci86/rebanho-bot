@@ -1036,6 +1036,32 @@ app.get('/api/exportar-finetuning/stats', async (req, res) => {
   } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+
+// ─── Agente de Logs — busca e analisa logs do Fly.io automaticamente ──────────
+let _agenteLogs = null
+function getAgenteLogs() {
+  if (!_agenteLogs) _agenteLogs = require('./agente_logs')
+  return _agenteLogs
+}
+
+// Endpoint para execução manual e consulta de insights
+app.get('/api/insights', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('bot_insights')
+      .select('*')
+      .order('detectado_em', { ascending: false })
+    res.json({ ok: true, data: data || [] })
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
+app.get('/api/insights/executar', async (req, res) => {
+  try {
+    const resultado = await getAgenteLogs().executarCiclo({ limite: 200 })
+    res.json({ ok: true, ...resultado })
+  } catch(err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 app.get('/api/lotes', async (req, res) => {
   try {
     res.json({ ok: true, data: await buscarResumoPorLote(req.query.fazenda||'Grupo Ricci') })
@@ -1059,5 +1085,14 @@ app.listen(PORT, () => {
   setTimeout(() => {
     getRag().indexarExemplosPendentes().catch(e => console.log('RAG indexação:', e.message))
     setTimeout(function() { require('./anomalias').analisarRebanho('Grupo Ricci').catch(function(){}) }, 20000)
+    // Agente de logs — primeira execução após 30s
+    setTimeout(function() {
+      getAgenteLogs().executarCiclo({ limite: 200 }).catch(e => console.log('AgenteLogs startup:', e.message))
+    }, 30000)
   }, 10000)
+
+  // Agente de logs — ciclo a cada 10 minutos
+  setInterval(function() {
+    getAgenteLogs().executarCiclo({ limite: 200 }).catch(e => console.log('AgenteLogs cron:', e.message))
+  }, 10 * 60 * 1000)
 })
