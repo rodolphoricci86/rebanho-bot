@@ -265,24 +265,47 @@ async function extrairMovimentacao(texto) {
 async function detectarTipoRegistro(texto) {
   const lower = texto.toLowerCase()
 
-  // Palavras que indicam MOVIMENTAÇÃO pontual
-  const palavrasMovim = [
-    'movimentação', 'movimentacao', 'registrar', 'entrada de', 'saída de', 'transferi',
-    'morreu', 'morte de', 'nasceu', 'comprei', 'compra de', 'vendi', 'venda de',
-    'pesagem', 'pesou', 'transferência', 'foi para', 'veio de', 'baixa', 'perdemos',
-    'chegou', 'saiu', 'brinco', 'lote', 'pasto'
+  // Palavras FORTES de movimentação — 1 já basta
+  const palavrasFortes = [
+    'movimentação', 'movimentacao', 'registrar movimentação', 'registrar a movimentação',
+    'morte de', 'morreram', 'morreu', 'nascimento de', 'nasceu', 'nasceram',
+    'comprei', 'compramos', 'compra de', 'vendi', 'vendemos', 'venda de',
+    'transferência', 'transferencia', 'transferi', 'transferimos',
+    'pesagem', 'pesou', 'pesamos',
+    'responsável', 'responsavel',
+    'baixa de', 'perdemos', 'óbito', 'obito',
+    'saída de', 'saida de', 'entrada de',
+    'desmamou', 'desmama de',
+  ]
+
+  // Palavras FRACAS de movimentação — precisam de 2+
+  const palavrasFracas = [
+    'registrar', 'nascimento', 'morte', 'compra', 'venda',
+    'transferiu', 'foi para', 'veio de', 'chegou', 'saiu',
+    'brinco', 'pasto', 'lote', 'curral',
   ]
 
   // Palavras que indicam MAPA MENSAL
   const palavrasMapa = [
-    'mapa', 'fechamento', 'existência', 'existencia', 'rebanho', 'cabeças',
-    'bezerros', 'garrotes', 'vacas paridas', 'vacas solteiras', 'novilhas'
+    'mapa', 'fechamento', 'existência', 'existencia', 'rebanho do mês',
+    'cabeças ao total', 'total de cabeças',
+    'bezerros são', 'garrotes são', 'vacas paridas', 'vacas solteiras',
+    'de 0 a', 'de 8 a', 'de 13 a', 'de 25 a',
   ]
 
-  const scoreMovim = palavrasMovim.filter(p => lower.includes(p)).length
-  const scoreMapa = palavrasMapa.filter(p => lower.includes(p)).length
+  const temForte  = palavrasFortes.filter(p => lower.includes(p)).length
+  const temFraco  = palavrasFracas.filter(p => lower.includes(p)).length
+  const temMapa   = palavrasMapa.filter(p => lower.includes(p)).length
 
-  if (scoreMovim > scoreMapa && scoreMovim >= 2) return 'movimentacao'
+  // Forte: 1 palavra forte já classifica como movimentação
+  if (temForte >= 1 && temMapa === 0) return 'movimentacao'
+  // Fraco: 2+ palavras fracas sem palavras de mapa
+  if (temFraco >= 2 && temMapa === 0) return 'movimentacao'
+  // Mapa explícito
+  if (temMapa >= 1 && temForte === 0) return 'mapa'
+  // Empate ou dúvida: se tem responsável/data = movimentação
+  if (lower.includes('responsável') || lower.includes('responsavel')) return 'movimentacao'
+
   return 'mapa'
 }
 
