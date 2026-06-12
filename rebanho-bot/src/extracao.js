@@ -352,14 +352,17 @@ async function agentRoteador(texto, contextoUsuario, exemplosFewShot) {
   } catch(e) {}
   const exemplosStr = exsRot.map(e => '- "' + e.transcricao + '" → ' + e.intencao).join('\n')
   const blocoEx = exemplosStr ? '\n\nExemplos semanticamente similares:\n' + exemplosStr : ''
-  const ctxStr = ctx && ctx.resumo ? 'Perfil do usuário: ' + ctx.resumo : 'Contexto: ' + JSON.stringify({ nome: ctx && ctx.nome, funcao: ctx && ctx.funcao, fazenda: ctx && ctx.fazenda })
+  const ctxStr = (ctx && ctx.resumo) ? ('Perfil do usuário: ' + ctx.resumo) : ('fazenda=' + ((ctx && ctx.fazenda) || 'Grupo Ricci') + ' funcao=' + ((ctx && ctx.funcao) || '?'))
   const prompt = 'Você é o roteador de um sistema de gestão de rebanho bovino.\nAnalise o texto e classifique em UMA das intenções:\n- "mapa": fechamento mensal com totais por categoria\n- "movimentacao": evento pontual (nascimento, morte, compra, venda, transferência, pesagem)\n- "consulta": pergunta sobre o rebanho\n- "cadastro": informação pessoal do usuário\n\nContexto: ' + JSON.stringify(ctx) + '\nTexto: "' + texto + '"\n\nResponda APENAS com JSON: {"intencao":"mapa|movimentacao|consulta|cadastro","confianca":0.9,"motivo":"breve"}'
   try {
     const r = await chamarGroq([
       { role: 'system', content: 'Classificador JSON. Responda apenas com JSON válido sem markdown.' },
       { role: 'user', content: prompt }
     ], 100)
-    const parsed = JSON.parse((r||'').toString().trim().replace(/```json|```/g,''))
+    var rawR = (r||'').toString().trim().replace(/```json|```/g,'').trim()
+    var ib = rawR.indexOf('{'), lb = rawR.lastIndexOf('}')
+    if (ib >= 0 && lb > ib) rawR = rawR.substring(ib, lb+1)
+    const parsed = JSON.parse(rawR)
     console.log('Roteador:', parsed.intencao, '(' + Math.round((parsed.confianca||0)*100) + '%) -', parsed.motivo)
     return parsed
   } catch(e) {
