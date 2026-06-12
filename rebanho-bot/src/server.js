@@ -231,6 +231,16 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
     }
 
     // ── Comandos ──
+    const correcao = detectarCorrecao(corpo)
+    if (correcao && ultimaClassificacao[de]) {
+      const ult = ultimaClassificacao[de]
+      if (ult.intencao !== correcao.intencao) {
+        registrarFeedback(de, ult.transcricao, ult.intencao, correcao.intencao).catch(() => {})
+        delete ultimaClassificacao[de]
+        return responderWhatsApp(res, '_Entendido! Aprendi com essa correção._ ✅')
+      }
+    }
+
     const cmd = (corpo || '').trim().toLowerCase()
     if (cmd === 'resumo') {
       const r = await buscarResumoMensal(3)
@@ -555,6 +565,42 @@ async function atualizarContextoUsuario(whatsapp, dados) {
   } catch(e) { console.log('Erro contexto:', e.message) }
 }
 
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FEEDBACK LOOP
+// ════════════════════════════════════════════════════════════════════════════════
+
+const ultimaClassificacao = {}
+
+async function registrarFeedback(whatsapp, transcricao, intencaoBot, intencaoCorreta) {
+  try {
+    await supabase.from('bot_feedback').insert({ whatsapp, transcricao, intencao_bot: intencaoBot, intencao_correta: intencaoCorreta })
+    await supabase.from('bot_exemplos').insert({ transcricao, intencao: intencaoCorreta, fonte: 'feedback' })
+    console.log('Feedback:', intencaoBot, '->', intencaoCorreta)
+  } catch(e) { console.log('Erro feedback:', e.message) }
+}
+
+async function buscarExemplosFewShot(limite) {
+  try {
+    const { data } = await supabase.from('bot_exemplos').select('transcricao, intencao').eq('ativo', true).order('criado_em', { ascending: false }).limit(limite || 6)
+    return data || []
+  } catch(e) { return [] }
+}
+
+function detectarCorrecao(texto) {
+  const lower = (texto || '').toLowerCase().trim()
+  if (/era.*(movimenta|mapa|consulta)/i.test(lower) || /isso.*[eé].*(movimenta|mapa|consulta)/i.test(lower)) {
+    const m = lower.match(/(movimenta[cç][aã]o|mapa|consulta|compra|venda|morte|nascimento)/)
+    if (m) {
+      const p = m[1]
+      if (p === 'mapa') return { intencao: 'mapa' }
+      if (p === 'consulta') return { intencao: 'consulta' }
+      return { intencao: 'movimentacao' }
+    }
+  }
+  return null
+}
 
 // ─── Saudação personalizada ────────────────────────────────────────────────────
 const ultimaSaudacao = {} // cache em memória: { whatsapp: Date }
