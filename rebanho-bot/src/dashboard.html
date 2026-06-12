@@ -155,7 +155,18 @@
 </header>
 
 <div class="container">
-  <div id="alertas"></div>
+  
+  <div class="busca-container">
+    <div class="busca-box">
+      <input type="text" id="buscaInput" class="busca-input"
+        placeholder="🔍 Pergunte sobre o rebanho... ex: qual a mortalidade em março? quantos machos temos?"
+        onkeydown="if(event.key==='Enter') executarBusca()" />
+      <button class="busca-btn" onclick="executarBusca()" id="buscaBtn">Buscar</button>
+    </div>
+    <div class="busca-resposta" id="buscaResposta"></div>
+  </div>
+
+<div id="alertas"></div>
   <div id="kpis" class="kpis"><div class="loading">Carregando...</div></div>
   <div id="comparacao" class="comparacao" style="display:none"></div>
   <div class="charts-grid">
@@ -560,6 +571,36 @@ document.addEventListener('click', function(e) {
   renderTabelaCat(dadosGlobais[0])
   atualizarEstilos()
 })
+
+async function executarBusca() {
+  var input = document.getElementById('buscaInput')
+  var btn = document.getElementById('buscaBtn')
+  var respDiv = document.getElementById('buscaResposta')
+  var query = input.value.trim()
+  if (!query) return
+  btn.disabled = true
+  btn.textContent = '⏳ Buscando...'
+  respDiv.className = 'busca-resposta visivel'
+  respDiv.innerHTML = '<em style="color:var(--muted)">Analisando com IA...</em>'
+  try {
+    var r = await fetch(API + '/api/busca', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ query }) })
+    var j = await r.json()
+    if (!j.ok) throw new Error(j.error)
+    var html = '<strong>🤖 Resposta:</strong><br><br>' + j.resposta.replace(/\n/g, '<br>')
+    if (j.exemplos_similares && j.exemplos_similares.length > 0) {
+      html += '<div class="busca-similares"><br><strong>Registros similares:</strong><br>'
+      html += j.exemplos_similares.map(function(e) { return '• ' + e.transcricao.substring(0,80) + (e.similaridade ? ' <span style="color:var(--verde)">(' + (e.similaridade*100).toFixed(0) + '% similar)</span>' : '') }).join('<br>')
+      html += '</div>'
+    }
+    respDiv.innerHTML = html
+  } catch(e) {
+    respDiv.innerHTML = '<span style="color:#c62828">Erro: ' + e.message + '</span>'
+  } finally {
+    btn.disabled = false
+    btn.textContent = 'Buscar'
+  }
+}
+
 
 function renderMovimentacoes(dados) {
   var el = document.getElementById('movimentacoes')
