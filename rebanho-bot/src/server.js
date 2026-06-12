@@ -68,6 +68,10 @@ function gerarPergunta(etapa, dados) {
     'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
 
   if (etapa === 'periodo') {
+    // Se mes e ano já foram extraídos, pular para próxima etapa
+    if (dados.mes && dados.ano) {
+      return gerarPerguntaEtapa(dados, 'existencia')
+    }
     return `_Não identifiquei a data nos dados._\n\n📅 *Para qual data é este mapa? (dia, mês e ano)*\nEx: *15 de março de 2026* ou *15/03/2026*`
   }
 
@@ -341,8 +345,10 @@ async function tratarRespostaSessao(de, textoResposta, dados, etapa) {
           var movsPre = Array.isArray(dados.dadosPre) ? dados.dadosPre : [dados.dadosPre]
           for (var mvp of movsPre) await processarMovimentacao(de, mvp, txOrig)
         } else if (intOrig === 'mapa') {
-          setSessao(de, dados.dadosPre, 'periodo')
-          await processarComplemento(de, txOrig, dados.dadosPre, 'periodo')
+          // Determinar etapa correta com base nos dados pré-extraídos
+          var etapaInicial = (dados.dadosPre.mes && dados.dadosPre.ano) ? 'existencia' : 'periodo'
+          setSessao(de, dados.dadosPre, etapaInicial)
+          await processarComplemento(de, txOrig, dados.dadosPre, etapaInicial)
         } else { await processarTexto(de, txOrig, lidOrig) }
       } else { await processarTexto(de, txOrig, lidOrig) }
     } else {
