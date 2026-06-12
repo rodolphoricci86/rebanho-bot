@@ -329,6 +329,29 @@ async function perguntarProximoCadastro(de) {
 async function tratarRespostaSessao(de, textoResposta, dados, etapa) {
   const resposta = (textoResposta || '').trim().toLowerCase()
 
+  // Aprendizado ativo
+  if (etapa === 'confirmar_intencao') {
+    var txOrig = dados.texto, lidOrig = dados.logId, intOrig = dados.intencao
+    var respLower = textoResposta.toLowerCase().trim()
+    limparSessao(de)
+    if (respLower === 'sim' || respLower === 's') {
+      registrarFeedback(de, txOrig, intOrig, intOrig).catch(() => {})
+      await processarTexto(de, txOrig, lidOrig)
+    } else {
+      var intCorr = intOrig
+      if (respLower.includes('mapa') || respLower.includes('fechamento')) intCorr = 'mapa'
+      else if (respLower.includes('movim') || respLower.includes('compra') || respLower.includes('venda') || respLower.includes('morte') || respLower.includes('nasc')) intCorr = 'movimentacao'
+      else if (respLower.includes('consul')) intCorr = 'consulta'
+      registrarFeedback(de, txOrig, intOrig, intCorr).catch(() => {})
+      atualizarLog(lidOrig, { intencao_detectada: intCorr }).catch(() => {})
+      if (intCorr === 'movimentacao') { var movs2 = await extrairMovimentacaoMultipla(txOrig); for (var mv of movs2) await processarMovimentacao(de, mv, txOrig) }
+      else if (intCorr === 'consulta') { var dr2 = await buscarResumoMensal(6); var ctx3 = await obterMemoriaUsuario(de); await enviarMensagem(de, await agentConsulta(txOrig, dr2, ctx3)) }
+      else await processarTexto(de, txOrig, lidOrig)
+      await enviarMensagem(de, '_Aprendi com essa correção!_ ✅')
+    }
+    return
+  }
+
   // Etapa de movimentação com campos faltando
   if (etapa === 'movimentacao_campo') {
     const movDados = dados.mov || {}
@@ -423,6 +446,16 @@ async function processarTexto(de, texto, logId) {
     const rota = await agentRoteador(texto, ctx, exemplos)
     ultimaClassificacao[de] = { intencao: rota.intencao, transcricao: texto }
     atualizarLog(logId, { intencao_detectada: rota.intencao, confianca: rota.confianca, status: 'processando' }).catch(() => {})
+
+    // APRENDIZADO ATIVO
+    var confiancaRota = rota.confianca || 1
+    if (confiancaRota < 0.7) {
+      var LABELS = { mapa:'fechamento mensal', movimentacao:'movimentação pontual', consulta:'consulta', cadastro:'cadastro' }
+      setSessao(de, { _pendente: true, texto: texto, logId: logId, intencao: rota.intencao }, 'confirmar_intencao')
+      await enviarMensagem(de, '_Identifiquei como *' + (LABELS[rota.intencao]||rota.intencao) + '* (' + Math.round(confiancaRota*100) + '% de certeza)._\n\n✅ *sim* — confirmar\n❌ *não* — corrija: mapa, movimentação ou consulta')
+      return
+    }
+
     if (rota.intencao === 'movimentacao') {
       console.log('Roteador → MOVIMENTAÇÃO')
       const movs = await extrairMovimentacaoMultipla(texto)
