@@ -140,9 +140,14 @@
   <h1>🐄 Mapa de Rebanho — Grupo Ricci</h1>
   <div class="header-right">
     <select id="selMeses" onchange="carregar()">
+      <option value="3">3 meses</option>
       <option value="6">6 meses</option>
       <option value="12" selected>12 meses</option>
       <option value="24">24 meses</option>
+      <option value="36">36 meses</option>
+    </select>
+    <select id="selMesRef" onchange="mudarMesRef()" title="Mês de referência para KPIs" style="background:var(--card);color:var(--text);border:1px solid #d1fae5;border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;margin-right:8px">
+      <option value="">Mês mais recente</option>
     </select>
     <button class="btn-refresh" onclick="carregar()">↻ Atualizar</button>
     <span id="ultima-att"></span>
@@ -171,6 +176,31 @@ const MESES_FULL = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Ju
 let chartEv, chartPz, chartMv
 let dadosGlobais = []
 let filtroCat = 'todos'
+let mesRefIndex = 0
+
+function mudarMesRef() {
+  mesRefIndex = parseInt(document.getElementById('selMesRef').value) || 0
+  if (!dadosGlobais.length) return
+  const d = dadosGlobais[mesRefIndex] || dadosGlobais[0]
+  renderKPIs(dadosGlobais)
+  renderComparacao(dadosGlobais)
+  renderChartPizza(d)
+  renderMovCards(d)
+  renderTabelaCat(d)
+}
+
+function popularSelMesRef(dados) {
+  const sel = document.getElementById('selMesRef')
+  const MB = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
+  sel.innerHTML = '<option value="">Mês mais recente</option>'
+  dados.forEach(function(d, i) {
+    var opt = document.createElement('option')
+    opt.value = i
+    opt.textContent = MB[d.mes] + '/' + d.ano + ' (' + Number(d.total_rebanho).toLocaleString('pt-BR') + ' cab)'
+    if (i === mesRefIndex) opt.selected = true
+    sel.appendChild(opt)
+  })
+}
 
 async function carregar() {
   const lim = document.getElementById('selMeses').value
@@ -183,6 +213,7 @@ async function carregar() {
       document.getElementById('kpis').innerHTML = '<div class="sem-dados">Nenhum dado disponível ainda. Envie um áudio pelo WhatsApp!</div>'
       return
     }
+    popularSelMesRef(dadosGlobais)
     renderAlertas(dadosGlobais)
     renderKPIs(dadosGlobais)
     renderComparacao(dadosGlobais)
@@ -222,7 +253,9 @@ function renderAlertas(dados) {
 }
 
 function renderKPIs(dados) {
-  const d = dados[0], prev = dados[1]
+  var idx = mesRefIndex || 0
+  const d = dados[idx] || dados[0]
+  const prev = dados[idx + 1] || null
   const delta = (campo) => {
     if (!prev) return ''
     const diff = Number(d[campo]) - Number(prev[campo])
@@ -242,8 +275,10 @@ function renderKPIs(dados) {
 }
 
 function renderComparacao(dados) {
+  var idx = mesRefIndex || 0
   if (dados.length < 2) { document.getElementById('comparacao').style.display='none'; return }
-  const a = dados[0], b = dados[1]
+  const a = dados[idx] || dados[0]
+  const b = dados[idx + 1] || dados[1]
   const el = document.getElementById('comparacao')
   el.style.display = 'block'
   const row = (label, campoA, campoB) => {
@@ -561,6 +596,7 @@ function renderMovimentacoes(dados) {
 
 
 carregar()
+setInterval(carregar, 5 * 60 * 1000)
 
 // Atualizar classes de botões e mortalidade após render
 function atualizarEstilos() {
