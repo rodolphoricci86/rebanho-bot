@@ -196,6 +196,14 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
         return
       }
 
+      // CADASTRO: resposta de texto para campos de onboarding
+      if (etapa.startsWith('cadastro_') || etapa === 'movimentacao_campo') {
+        responderWhatsApp(res, '_Processando..._')
+        tratarRespostaSessao(de, corpo, dados, etapa).catch(err =>
+          enviarMensagem(de, 'Erro: ' + err.message))
+        return
+      }
+
       // PERÍODO, EXISTÊNCIA, LOTE: sempre tentar extrair do texto
       responderWhatsApp(res, '_Processando..._')
       processarComplemento(de, corpo, dados, etapa).catch(err =>
