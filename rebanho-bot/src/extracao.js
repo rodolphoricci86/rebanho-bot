@@ -352,6 +352,7 @@ async function agentRoteador(texto, contextoUsuario, exemplosFewShot) {
   } catch(e) {}
   const exemplosStr = exsRot.map(e => '- "' + e.transcricao + '" → ' + e.intencao).join('\n')
   const blocoEx = exemplosStr ? '\n\nExemplos semanticamente similares:\n' + exemplosStr : ''
+  const ctxStr = ctx && ctx.resumo ? 'Perfil do usuário: ' + ctx.resumo : 'Contexto: ' + JSON.stringify({ nome: ctx && ctx.nome, funcao: ctx && ctx.funcao, fazenda: ctx && ctx.fazenda })
   const prompt = 'Você é o roteador de um sistema de gestão de rebanho bovino.\nAnalise o texto e classifique em UMA das intenções:\n- "mapa": fechamento mensal com totais por categoria\n- "movimentacao": evento pontual (nascimento, morte, compra, venda, transferência, pesagem)\n- "consulta": pergunta sobre o rebanho\n- "cadastro": informação pessoal do usuário\n\nContexto: ' + JSON.stringify(ctx) + '\nTexto: "' + texto + '"\n\nResponda APENAS com JSON: {"intencao":"mapa|movimentacao|consulta|cadastro","confianca":0.9,"motivo":"breve"}'
   try {
     const r = await chamarGroq([
@@ -368,11 +369,12 @@ async function agentRoteador(texto, contextoUsuario, exemplosFewShot) {
   }
 }
 
-async function agentConsulta(texto, dadosRebanho) {
+async function agentConsulta(texto, dadosRebanho, ctx) {
   const resumo = (dadosRebanho||[]).slice(0,6).map(d =>
     d.mes+'/'+d.ano+': '+d.total_rebanho+' cab ('+d.total_machos+'M/'+d.total_femeas+'F, mortes:'+d.total_mortes+')'
   ).join(', ')
-  const prompt = 'Você é assistente de pecuária bovina do Grupo Ricci. Responda de forma direta e amigável em português.\n\nDados do rebanho: ' + (resumo||'sem dados') + '\n\nPergunta: "' + texto + '"'
+  const perfilUsuario = (ctx && ctx.resumo) ? '\n\nPerfil do usuário: ' + ctx.resumo : ''
+  const prompt = 'Você é assistente de pecuária bovina do Grupo Ricci. Responda de forma direta e amigável em português.' + perfilUsuario + '\n\nDados do rebanho: ' + (resumo||'sem dados') + '\n\nPergunta: "' + texto + '"'
   try {
     const r = await chamarGroq([
       { role: 'system', content: 'Assistente de pecuária. Responda direto e amigável.' },
