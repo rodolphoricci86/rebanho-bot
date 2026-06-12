@@ -213,6 +213,7 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
 
     // ── Áudio novo ──
     if (parseInt(numMedia) > 0 && mediaType?.startsWith('audio')) {
+      saudarSeNecessario(de).catch(() => {})
       responderWhatsApp(res, '_Recebi seu áudio! Transcrevendo e processando..._')
       processarAudio(de, mediaUrl).catch(err => {
         console.error('Erro áudio:', err)
@@ -552,6 +553,46 @@ async function atualizarContextoUsuario(whatsapp, dados) {
     if (dados.fazenda && dados.fazenda !== 'Grupo Ricci') updates.fazenda = dados.fazenda
     await supabase.from('usuarios').update(updates).eq('whatsapp', whatsapp)
   } catch(e) { console.log('Erro contexto:', e.message) }
+}
+
+
+// ─── Saudação personalizada ────────────────────────────────────────────────────
+const ultimaSaudacao = {} // cache em memória: { whatsapp: Date }
+
+async function saudarSeNecessario(de) {
+  try {
+    const agora = new Date()
+    const ultima = ultimaSaudacao[de]
+
+    // Só saudar uma vez a cada 6 horas
+    if (ultima && (agora - ultima) < 6 * 60 * 60 * 1000) return
+
+    ultimaSaudacao[de] = agora
+
+    const ctx = await obterContextoUsuario(de)
+    if (!ctx.nome) return // sem nome cadastrado, não saudar
+
+    const hora = agora.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: 'numeric', hour12: false })
+    const h = parseInt(hora)
+    const periodo = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'
+
+    let msg = '*' + periodo + ', ' + ctx.nome.split(' ')[0] + '!* 👋'
+
+    if (ctx.historico && ctx.historico.length > 0) {
+      const ult = ctx.historico[0]
+      const meses = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
+      if (ult.tipo === 'mapa' && ult.mes && ult.ano) {
+        msg += '\nÚltimo registro: mapa de ' + meses[ult.mes] + '/' + ult.ano
+      } else if (ult.tipo === 'movimentacao') {
+        msg += '\nÚltimo registro: movimentação em ' + (ult.fazenda || ctx.fazenda || 'Grupo Ricci')
+      }
+    }
+
+    msg += '\n\n_Pode enviar o áudio quando quiser._'
+    await enviarMensagem(de, msg)
+  } catch(e) {
+    console.log('Erro saudação:', e.message)
+  }
 }
 
 // ─── Processar movimentação pontual ──────────────────────────────────────────
