@@ -459,7 +459,7 @@ async function processarTexto(de, texto, logId) {
     const exemplos = await buscarExemplosFewShot(6)
     const rota = await agentRoteador(texto, ctx, exemplos)
     ultimaClassificacao[de] = { intencao: rota.intencao, transcricao: texto }
-    atualizarLog(logId, { intencao_detectada: rota.intencao, confianca: rota.confianca, status: 'processando' }).catch(() => {})
+    atualizarLog(logId, { intencao_detectada: rota.intencao, confianca: rota.confianca, status: 'processando', modelo_usado: 'gpt-4o-mini' }).catch(() => {})
 
     // APRENDIZADO ATIVO
     var confiancaRota = rota.confianca || 1
@@ -808,19 +808,21 @@ async function salvarEResponderMovimentacao(de, mov) {
       dataIso = mov.ano + '-' + String(mov.mes).padStart(2,'0') + '-' + String(mov.dia).padStart(2,'0')
     }
     await supabase.from('movimentacoes_lote').insert({
-      fazenda:     mov.fazenda || 'Grupo Ricci',
+      fazenda:        mov.fazenda || 'Grupo Ricci',
       tipo,
-      data_mov:    dataIso || new Date().toISOString().substring(0, 10),
-      quantidade:  mov.quantidade || 1,
-      observacoes: [
-        mov.categoria  && 'Cat: '         + mov.categoria,
-        mov.brincos    && 'Brincos: '     + mov.brincos,
-        mov.motivo     && 'Motivo: '      + mov.motivo,
-        mov.responsavel && 'Resp: '       + mov.responsavel,
-        mov.ocorrencia && 'Ocorrencia: '  + mov.ocorrencia,
-        mov.origem     && 'Origem: '      + mov.origem,
-        mov.destino    && 'Destino: '     + mov.destino,
-      ].filter(Boolean).join(' | ') || null,
+      data_mov:       dataIso || new Date().toISOString().substring(0, 10),
+      quantidade:     mov.quantidade || 1,
+      peso:           mov.peso || null,
+      valor:          mov.valor || null,
+      categoria:      mov.categoria || null,
+      categoria_item: mov.categoria_item || null,
+      sexo:           mov.sexo || null,
+      responsavel:    mov.responsavel || null,
+      ocorrencia:     mov.ocorrencia || null,
+      motivo:         mov.motivo || null,
+      lote_origem:    mov.origem || null,
+      lote_destino:   mov.destino || null,
+      observacoes:    [mov.brincos && 'Brincos: '+mov.brincos].filter(Boolean).join(' | ') || null,
       whatsapp_de: de,
     })
 
@@ -1082,6 +1084,10 @@ app.get('/api/animais', async (req, res) => {
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
   console.log(`Servidor na porta ${PORT}`)
+  supabase.from('configuracoes').select('chave, valor').then(({ data }) => {
+    if (data) data.forEach(c => { process.env['CFG_'+c.chave.toUpperCase()] = c.valor })
+    console.log('Configurações carregadas:', (data||[]).length)
+  }).catch(() => {})
   setTimeout(() => {
     getRag().indexarExemplosPendentes().catch(e => console.log('RAG indexação:', e.message))
     setTimeout(function() { require('./anomalias').analisarRebanho('Grupo Ricci').catch(function(){}) }, 20000)
