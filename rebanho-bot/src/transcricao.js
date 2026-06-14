@@ -52,7 +52,10 @@ async function transcreverAudio(mediaUrl, accountSid, authToken, tentativa = 1) 
       await new Promise(r => setTimeout(r, espera))
       return transcreverAudio(mediaUrl, accountSid, authToken, tentativa + 1)
     }
-    throw err
+    const status = err.response?.status
+    const detail = err.response?.data ? JSON.stringify(err.response.data).substring(0,100) : err.message
+    console.log(`[ERRO] Whisper: status=${status} | ${detail}`)
+    throw new Error(`Whisper ${status||'timeout'}: ${detail}`)
   }
 }
 
