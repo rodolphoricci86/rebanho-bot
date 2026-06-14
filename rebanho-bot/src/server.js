@@ -43,7 +43,7 @@ function limparSessao(de) { delete sessoes[de] }
 function analisarFaltando(dados) {
   const faltando = []
 
-  if (!dados.mes || !dados.ano) faltando.push('periodo')
+  if (!dados.mes || !dados.ano || !dados.dia) faltando.push('periodo')
 
   const temCategorias = dados.categorias && dados.categorias.length > 0
   const temExistencia = temCategorias && dados.categorias.some(c => c.existencia_atual > 0)
@@ -68,11 +68,15 @@ function gerarPergunta(etapa, dados) {
     'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
 
   if (etapa === 'periodo') {
-    // Se mes e ano já foram extraídos, pular para próxima etapa
-    if (dados.mes && dados.ano) {
+    // Se dia, mes e ano já foram extraídos, pular para próxima etapa
+    if (dados.dia && dados.mes && dados.ano) {
       return gerarPerguntaEtapa(dados, 'existencia')
     }
-    return `_Não identifiquei a data nos dados._\n\n📅 *Para qual data é este mapa? (dia, mês e ano)*\nEx: *15 de março de 2026* ou *15/03/2026*`
+    var meses=['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+    if (dados.mes && dados.ano && !dados.dia) {
+      return `_Identifiquei ${meses[dados.mes]} de ${dados.ano}, mas preciso do dia._\n\n📅 *Qual o dia deste mapa?*\nEx: *02* ou *dia 2*`
+    }
+    return `_Não identifiquei a data completa._\n\n📅 *Para qual data é este mapa? (dia, mês e ano)*\nEx: *02 de junho de 2026* ou *02/06/2026*`
   }
 
   if (etapa === 'existencia') {
@@ -346,7 +350,7 @@ async function tratarRespostaSessao(de, textoResposta, dados, etapa) {
           for (var mvp of movsPre) await processarMovimentacao(de, mvp, txOrig)
         } else if (intOrig === 'mapa') {
           // Determinar etapa correta com base nos dados pré-extraídos
-          var etapaInicial = (dados.dadosPre.mes && dados.dadosPre.ano) ? 'existencia' : 'periodo'
+          var etapaInicial = (dados.dadosPre.dia && dados.dadosPre.mes && dados.dadosPre.ano) ? 'existencia' : 'periodo'
           setSessao(de, dados.dadosPre, etapaInicial)
           await processarComplemento(de, txOrig, dados.dadosPre, etapaInicial)
         } else { await processarTexto(de, txOrig, lidOrig) }
