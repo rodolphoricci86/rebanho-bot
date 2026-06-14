@@ -225,7 +225,7 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
       const logId = await criarLog(de, 'audio', { mediaUrl })
       responderWhatsApp(res, '_Recebi seu áudio! Transcrevendo e processando..._')
       processarAudio(de, mediaUrl, logId).catch(err => {
-        console.error('Erro áudio:', err)
+        console.log('[ERRO] Audio:', err.message, '| status:', err.response?.status, '| detail:', JSON.stringify(err.response?.data||{}).substring(0,80))
         enviarMensagem(de, `Erro: ${err.message}. Tente novamente.`)
       })
       return
@@ -459,7 +459,7 @@ async function processarTexto(de, texto, logId) {
     const exemplos = await buscarExemplosFewShot(6)
     const rota = await agentRoteador(texto, ctx, exemplos)
     ultimaClassificacao[de] = { intencao: rota.intencao, transcricao: texto }
-    atualizarLog(logId, { intencao_detectada: rota.intencao, confianca: rota.confianca, status: 'processando', modelo_usado: 'gpt-4o-mini' }).catch(() => {})
+    atualizarLog(logId, { intencao_detectada: rota.intencao, confianca: rota.confianca, status: 'processando', modelo_usado: process.env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001' }).catch(() => {})
 
     // APRENDIZADO ATIVO — limiar dinâmico da tabela configuracoes
     var confiancaRota = rota.confianca || 1
@@ -471,7 +471,7 @@ async function processarTexto(de, texto, logId) {
       try {
         if (rota.intencao === 'mapa') { dadosPre = await extrairDadosRebanho(texto); dadosPre._transcricaoOriginal = texto }
         else if (rota.intencao === 'movimentacao') { dadosPre = await extrairMovimentacaoMultipla(texto) }
-      } catch(e) { console.log('Pré-extração:', e.message) }
+      } catch(e) { console.log('[WARN] Pré-extração:', e.message) }
       setSessao(de, { _pendente: true, texto: texto, logId: logId, intencao: rota.intencao, dadosPre: dadosPre }, 'confirmar_intencao')
       await enviarMensagem(de, '_Identifiquei como *' + (LABELS[rota.intencao]||rota.intencao) + '* (' + Math.round(confiancaRota*100) + '% de certeza)._\n\n✅ *sim* — confirmar\n❌ *não* — corrija: mapa, movimentação ou consulta')
       return
@@ -632,7 +632,7 @@ async function atualizarContextoUsuario(whatsapp, dados) {
     }
     if (dados.fazenda && dados.fazenda !== 'Grupo Ricci') updates.fazenda = dados.fazenda
     await supabase.from('usuarios').update(updates).eq('whatsapp', whatsapp)
-  } catch(e) { console.log('Erro contexto:', e.message) }
+  } catch(e) { console.log('[WARN] contexto:', e.message) }
 }
 
 
@@ -650,7 +650,7 @@ async function registrarFeedback(whatsapp, transcricao, intencaoBot, intencaoCor
     console.log('Feedback:', intencaoBot, '->', intencaoCorreta)
     // Gerar embedding RAG para o novo exemplo
     if (novoEx?.id) getRag().salvarEmbedding('bot_exemplos', novoEx.id, transcricao).catch(() => {})
-  } catch(e) { console.log('Erro feedback:', e.message) }
+  } catch(e) { console.log('[WARN] feedback:', e.message) }
 }
 
 async function buscarExemplosFewShot(limite) {
@@ -696,7 +696,7 @@ async function comprimirMemoriaUsuario(whatsapp) {
     await supabase.from('usuarios').update({ memoria_comprimida: memoria, memoria_atualizada_em: new Date().toISOString() }).eq('whatsapp', whatsapp)
     console.log('Memória comprimida:', whatsapp, memoria.length + ' chars')
     return memoria
-  } catch(e) { console.log('Erro memória:', e.message); return null }
+  } catch(e) { console.log('[WARN] memória:', e.message); return null }
 }
 
 async function obterMemoriaUsuario(whatsapp) {
@@ -752,7 +752,7 @@ async function saudarSeNecessario(de) {
     msg += '\n\n_Pode enviar o áudio quando quiser._'
     await enviarMensagem(de, msg)
   } catch(e) {
-    console.log('Erro saudação:', e.message)
+    console.log('[WARN] saudação:', e.message)
   }
 }
 
@@ -871,7 +871,7 @@ async function enviarMensagem(para, mensagem) {
       body: mensagem,
     })
   } catch (err) {
-    console.error('Erro Twilio ao enviar:', err.message)
+    console.log('[ERRO] Twilio:', err.message, '| status:', err.response?.status, '| detail:', JSON.stringify(err.response?.data||{}).substring(0,80))
     return null
   }
 }
