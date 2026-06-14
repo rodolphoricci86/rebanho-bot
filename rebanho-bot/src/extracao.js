@@ -111,9 +111,13 @@ async function chamarClaude(mensagens, maxTokens) {
     timeout: 30000,
   })
   const text = response.data.content[0].text
-  const ib = text.indexOf('{'), lb = text.lastIndexOf('}')
-  if (ib >= 0 && lb > ib) return JSON.parse(text.substring(ib, lb+1))
-  return JSON.parse(text)
+  try {
+    const ib = text.indexOf('{'), lb = text.lastIndexOf('}')
+    if (ib >= 0 && lb > ib) return JSON.parse(text.substring(ib, lb+1))
+    return JSON.parse(text)
+  } catch(e) {
+    return text // texto puro para agentConsulta
+  }
 }
 
 
@@ -377,10 +381,8 @@ async function agentRoteador(texto, contextoUsuario, exemplosFewShot) {
       { role: 'system', content: 'Classificador JSON. Responda apenas com JSON válido sem markdown.' },
       { role: 'user', content: prompt }
     ], 200)
-    var rawR = (r||'').toString().trim().replace(/```json|```/g,'').trim()
-    var ib = rawR.indexOf('{'), lb = rawR.lastIndexOf('}')
-    if (ib >= 0 && lb > ib) rawR = rawR.substring(ib, lb+1)
-    const parsed = JSON.parse(rawR)
+    // chamarClaude já retorna objeto parseado — usar direto
+    const parsed = (r && typeof r === 'object') ? r : JSON.parse((r||'').toString().trim().replace(/```json|```/g,'').trim())
     console.log('Roteador:', parsed.intencao, '(' + Math.round((parsed.confianca||0)*100) + '%) -', parsed.motivo)
     return parsed
   } catch(e) {
@@ -401,6 +403,7 @@ async function agentConsulta(texto, dadosRebanho, ctx) {
       { role: 'system', content: 'Assistente de pecuária. Responda direto e amigável.' },
       { role: 'user', content: prompt }
     ], 300)
+    if (r && typeof r === 'object') { return (r.text || r.resposta || JSON.stringify(r)).trim() }
     return (r||'').toString().trim()
   } catch(e) { return 'Não consegui processar sua consulta. Tente novamente.' }
 }
