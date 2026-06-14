@@ -186,15 +186,15 @@ async function salvarLogsBrutos(logsProcessados) {
 async function aplicarAcoesAutomaticas(insights) {
   for (const insight of insights) {
 
-    // Parse errors → salvar transcrições problemáticas como exemplos negativos
+    // Parse errors → Nível 3: gerar novos exemplos few-shot automaticamente
     if (insight.tipo === 'parse_errors' && insight.count >= 3) {
-      console.log('[agenteLogs] AÇÃO: Parse errors frequentes — marcando para revisão do prompt')
-      await getSb().from('bot_alertas').insert({
-        tipo: 'parse_error_frequente',
-        mensagem: `${insight.count} parse errors detectados nos logs recentes. Revisar prompt do agentRoteador.`,
-        dados: insight,
-        criado_em: new Date().toISOString(),
-      }).catch(() => {})
+      console.log('[agenteLogs] AÇÃO Nível 3: ' + insight.count + ' parse errors — gerando exemplos few-shot automaticamente')
+      await getSb().from('bot_alertas').insert({ tipo: 'parse_error_frequente', mensagem: insight.count + ' parse errors. Gerando exemplos automaticamente (Nível 3).', dados: insight, criado_em: new Date().toISOString() }).catch(() => {})
+      const salvos = await gerarExemplosFewShot(insight)
+      if (salvos > 0) {
+        try { await require('./rag').indexarExemplosPendentes() } catch(e) {}
+        console.log('[agenteLogs] Nível 3 completo: ' + salvos + ' exemplos → RAG reindexado')
+      }
     }
 
     // Baixa confiança frequente → disparar indexação de novos exemplos RAG
@@ -266,6 +266,38 @@ async function autoAjustarLimiar() {
       console.log('[agenteLogs] Limiar ajustado: ' + limiarAtual + ' → ' + novoLimiar + ' | ' + motivo)
     }
   } catch(e) { console.log('[agenteLogs] Erro auto-ajuste:', e.message) }
+}
+
+
+async function gerarExemplosFewShot(insight) {
+  try {
+    const msgs = (insight.msgs || []).slice(0, 3)
+    if (!msgs.length) return 0
+    const prompt = 'Você é especialista em gestão de rebanho bovino do Grupo Ricci (MG).\nO sistema de classificação está com parse errors. Mensagens problemáticas:\n' + msgs.map((m,i) => (i+1)+'. "'+m+'"').join('\n') + '\n\nGere 5 exemplos de transcrições de peões de fazenda em português informal com classificação correta.\nCategorias: "mapa" (fechamento mensal com totais), "movimentacao" (evento pontual), "consulta" (pergunta).\nResponda APENAS com JSON: [{"transcricao":"texto","intencao":"categoria"},...]'
+    const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model: 'gpt-4o-mini', max_tokens: 600,
+      messages: [{ role: 'system', content: 'Responda apenas com JSON válido sem markdown.' }, { role: 'user', content: prompt }]
+    }, { headers: { Authorization: 'Bearer ' + process.env.OPENAI_API_KEY }, timeout: 20000 })
+    const raw = resp.data.choices[0].message.content.trim()
+    const ib = raw.indexOf('['), lb = raw.lastIndexOf(']')
+    if (ib < 0 || lb < 0) throw new Error('JSON inválido')
+    const exemplos = JSON.parse(raw.substring(ib, lb+1))
+    if (!Array.isArray(exemplos) || !exemplos.length) throw new Error('Array vazio')
+    let salvos = 0
+    for (const ex of exemplos) {
+      if (!ex.transcricao || !ex.intencao) continue
+      let embedding = null
+      try {
+        const er = await axios.post('https://api.openai.com/v1/embeddings', { model: 'text-embedding-3-small', input: ex.transcricao }, { headers: { Authorization: 'Bearer ' + process.env.OPENAI_API_KEY }, timeout: 10000 })
+        embedding = er.data.data[0].embedding
+      } catch(e) {}
+      await getSb().from('bot_exemplos').insert({ transcricao: ex.transcricao, intencao: ex.intencao, fonte: 'agente_nivel3_auto', ativo: true, criado_em: new Date().toISOString(), embedding: embedding ? JSON.stringify(embedding) : null }).catch(() => {})
+      salvos++
+    }
+    await getSb().from('bot_insights').upsert({ tipo: 'exemplos_gerados_automaticamente', dados: { count: salvos, exemplos: exemplos.map(e=>e.transcricao) }, prioridade: 'media', detectado_em: new Date().toISOString(), processado: false }, { onConflict: 'tipo' }).catch(() => {})
+    console.log('[agenteLogs] Nível 3: ' + salvos + ' exemplos gerados')
+    return salvos
+  } catch(e) { console.log('[agenteLogs] Nível 3 erro:', e.message); return 0 }
 }
 
 module.exports = { executarCiclo, buscarLogsFly, parsearLog, analisarPadroes }
