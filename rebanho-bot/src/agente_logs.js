@@ -241,4 +241,31 @@ async function executarCiclo(opcoes) {
   return { insights, logsProcessados: logsProcessados.length }
 }
 
+
+async function autoAjustarLimiar() {
+  try {
+    const { data: feedbacks } = await getSb().from('bot_feedback').select('intencao_bot, intencao_correta').gte('corrigido_em', new Date(Date.now() - 48*60*60*1000).toISOString()).limit(50)
+    const { data: logs } = await getSb().from('bot_logs').select('confianca').gte('recebido_em', new Date(Date.now() - 48*60*60*1000).toISOString()).not('confianca', 'is', null).limit(100)
+    if (!logs || logs.length < 10) { console.log('[agenteLogs] Poucos dados para auto-ajuste'); return }
+    const { data: cfg } = await getSb().from('configuracoes').select('valor').eq('chave', 'limiar_confianca').single()
+    const limiarAtual = parseFloat(cfg?.valor || '0.7')
+    const totalLogs = logs.length
+    const baixaConf = logs.filter(l => l.confianca < limiarAtual).length
+    const pctBaixaConf = baixaConf / totalLogs
+    const totalFeedbacks = feedbacks?.length || 0
+    const erros = feedbacks?.filter(f => f.intencao_bot !== f.intencao_correta).length || 0
+    const taxaErro = totalFeedbacks > 0 ? erros / totalFeedbacks : 0
+    console.log('[agenteLogs] Limiar: ' + limiarAtual + ' | baixaConf: ' + (pctBaixaConf*100).toFixed(0) + '% | taxaErro: ' + (taxaErro*100).toFixed(0) + '%')
+    let novoLimiar = limiarAtual, motivo = ''
+    if (pctBaixaConf > 0.4 && taxaErro < 0.1) { novoLimiar = Math.max(0.5, limiarAtual - 0.05); motivo = 'Perguntando demais (' + (pctBaixaConf*100).toFixed(0) + '%) com erro baixo' }
+    else if (taxaErro > 0.25) { novoLimiar = Math.min(0.85, limiarAtual + 0.05); motivo = 'Taxa de erro alta (' + (taxaErro*100).toFixed(0) + '%)' }
+    else { console.log('[agenteLogs] Limiar equilibrado'); return }
+    if (novoLimiar !== limiarAtual) {
+      await getSb().from('configuracoes').upsert({ chave: 'limiar_confianca', valor: novoLimiar.toFixed(2), descricao: 'Auto-ajustado: ' + motivo, atualizado_em: new Date().toISOString() }, { onConflict: 'chave' })
+      await getSb().from('bot_insights').upsert({ tipo: 'limiar_ajustado', dados: { limiar_anterior: limiarAtual, limiar_novo: novoLimiar, motivo, pctBaixaConf, taxaErro }, prioridade: 'media', detectado_em: new Date().toISOString(), processado: false }, { onConflict: 'tipo' })
+      console.log('[agenteLogs] Limiar ajustado: ' + limiarAtual + ' → ' + novoLimiar + ' | ' + motivo)
+    }
+  } catch(e) { console.log('[agenteLogs] Erro auto-ajuste:', e.message) }
+}
+
 module.exports = { executarCiclo, buscarLogsFly, parsearLog, analisarPadroes }
