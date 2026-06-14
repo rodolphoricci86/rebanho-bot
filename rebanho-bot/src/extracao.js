@@ -98,6 +98,24 @@ async function chamarGroq(mensagens, maxTokens) {
   )
   return JSON.parse(response.data.choices[0].message.content)
 }
+async function chamarClaude(mensagens, maxTokens) {
+  const systemMsg = mensagens.find(m => m.role === 'system')
+  const userMsgs = mensagens.filter(m => m.role !== 'system')
+  const response = await axios.post('https://api.anthropic.com/v1/messages', {
+    model: process.env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001',
+    max_tokens: maxTokens || 1000,
+    system: systemMsg ? systemMsg.content : undefined,
+    messages: userMsgs.map(m => ({ role: m.role, content: m.content })),
+  }, {
+    headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+    timeout: 30000,
+  })
+  const text = response.data.content[0].text
+  const ib = text.indexOf('{'), lb = text.lastIndexOf('}')
+  if (ib >= 0 && lb > ib) return JSON.parse(text.substring(ib, lb+1))
+  return JSON.parse(text)
+}
+
 
 async function extrairDadosRebanho(texto) {
   // RAG: buscar exemplos semanticamente similares
@@ -355,10 +373,10 @@ async function agentRoteador(texto, contextoUsuario, exemplosFewShot) {
   const ctxStr = (ctx && ctx.resumo) ? ('Perfil do usuário: ' + ctx.resumo) : ('fazenda=' + ((ctx && ctx.fazenda) || 'Grupo Ricci') + ' funcao=' + ((ctx && ctx.funcao) || '?'))
   const prompt = 'Você é o roteador de um sistema de gestão de rebanho bovino.\nAnalise o texto e classifique em UMA das intenções:\n- "mapa": fechamento mensal com totais por categoria\n- "movimentacao": evento pontual (nascimento, morte, compra, venda, transferência, pesagem)\n- "consulta": pergunta sobre o rebanho\n- "cadastro": informação pessoal do usuário\n\nContexto: ' + JSON.stringify(ctx) + '\nTexto: "' + texto + '"\n\nResponda APENAS com JSON: {"intencao":"mapa|movimentacao|consulta|cadastro","confianca":0.9,"motivo":"breve"}'
   try {
-    const r = await chamarGroq([
+    const r = await chamarClaude([
       { role: 'system', content: 'Classificador JSON. Responda apenas com JSON válido sem markdown.' },
       { role: 'user', content: prompt }
-    ], 100)
+    ], 200)
     var rawR = (r||'').toString().trim().replace(/```json|```/g,'').trim()
     var ib = rawR.indexOf('{'), lb = rawR.lastIndexOf('}')
     if (ib >= 0 && lb > ib) rawR = rawR.substring(ib, lb+1)
@@ -379,7 +397,7 @@ async function agentConsulta(texto, dadosRebanho, ctx) {
   const perfilUsuario = (ctx && ctx.resumo) ? '\n\nPerfil do usuário: ' + ctx.resumo : ''
   const prompt = 'Você é assistente de pecuária bovina do Grupo Ricci. Responda de forma direta e amigável em português.' + perfilUsuario + '\n\nDados do rebanho: ' + (resumo||'sem dados') + '\n\nPergunta: "' + texto + '"'
   try {
-    const r = await chamarGroq([
+    const r = await chamarClaude([
       { role: 'system', content: 'Assistente de pecuária. Responda direto e amigável.' },
       { role: 'user', content: prompt }
     ], 300)
