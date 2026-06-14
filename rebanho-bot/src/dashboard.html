@@ -130,17 +130,6 @@
   .mov-saida   { background:#fdecea; color:#c62828; }
   .mov-transf  { background:#e8f0fe; color:#1a56db; }
   .mov-peso    { background:#fff3e0; color:#e65100; }
-
-
-  .busca-container { margin:24px 0; }
-  .busca-box { display:flex; gap:8px; align-items:center; }
-  .busca-input { flex:1; padding:12px 16px; border-radius:12px; border:2px solid var(--verde-claro); background:var(--card); color:var(--text); font-size:14px; outline:none; transition:border-color .2s; }
-  .busca-input:focus { border-color:var(--verde); }
-  .busca-input::placeholder { color:var(--muted); }
-  .busca-btn { padding:12px 20px; background:var(--verde); color:#fff; border:none; border-radius:12px; font-size:14px; font-weight:600; cursor:pointer; white-space:nowrap; }
-  .busca-btn:disabled { opacity:.5; cursor:not-allowed; }
-  .busca-resposta { margin-top:12px; padding:16px; background:var(--card); border-radius:12px; border-left:4px solid var(--verde); font-size:14px; line-height:1.6; display:none; }
-  .busca-resposta.visivel { display:block; }
   .anom-card { padding:12px 16px; border-radius:10px; margin-bottom:8px; display:flex; align-items:flex-start; gap:10px; }
   .anom-critica { background:#fdecea; border-left:4px solid #c62828; }
   .anom-alta    { background:#fff3e0; border-left:4px solid #e65100; }
@@ -154,6 +143,23 @@
   .badge-media   { background:#f9a825; color:#fff; }
   .badge-baixa   { background:#558b2f; color:#fff; }
 
+
+  .intel-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-top:8px; }
+  .intel-col { background:var(--card); border-radius:12px; padding:14px; min-height:120px; }
+  .intel-col-title { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; margin-bottom:10px; }
+  .intel-item { padding:8px 10px; border-radius:8px; margin-bottom:6px; font-size:12px; line-height:1.5; }
+  .intel-erro    { background:#fdecea; border-left:3px solid #c62828; color:#7a1a1a; }
+  .intel-tratado { background:#e8f0fe; border-left:3px solid #1a56db; color:#1a3a7a; }
+  .intel-aprendeu{ background:#e6f4ea; border-left:3px solid #1e7e34; color:#0d4a1f; }
+  .intel-empty   { font-size:12px; color:var(--muted); font-style:italic; padding:4px 0; }
+  .intel-badge   { display:inline-block; padding:1px 6px; border-radius:6px; font-size:10px; font-weight:700; margin-right:4px; }
+  .badge-critica { background:#c62828; color:#fff; }
+  .badge-alta    { background:#e65100; color:#fff; }
+  .badge-media   { background:#f9a825; color:#1a1a1a; }
+  .badge-ok      { background:#1e7e34; color:#fff; }
+  .badge-info    { background:#1a56db; color:#fff; }
+  .limiar-bar    { flex:1; height:6px; background:var(--bg); border-radius:3px; overflow:hidden; }
+  .limiar-fill   { height:100%; background:var(--verde); border-radius:3px; transition:width .5s; }
   .sem-dados { text-align: center; padding: 40px; color: var(--muted); font-size: 13px; }
 </style>
 </head>
@@ -179,32 +185,57 @@
 
 <div class="container">
   
-  <div class="busca-container">
-    <div class="busca-box">
-      <input type="text" id="buscaInput" class="busca-input"
-        placeholder="🔍 Pergunte sobre o rebanho... ex: qual a mortalidade em março? quantos machos temos?"
-        onkeydown="if(event.key==='Enter') executarBusca()" />
-      <button class="busca-btn" onclick="executarBusca()" id="buscaBtn">Buscar</button>
-    </div>
-    <div class="busca-resposta" id="buscaResposta"></div>
-  </div>
+  
 
 
-  <div id="anomalias-section" style="margin-top:16px;display:none">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-      <h2 style="margin:0;font-size:16px">⚠️ Anomalias Detectadas</h2>
-      <button onclick="reanalizar()" style="font-size:11px;padding:4px 10px;background:var(--verde);color:#fff;border:none;border-radius:8px;cursor:pointer">🔄 Reanalisar</button>
+  
+      <div class="intel-col">
+        <div class="intel-col-title" style="color:#1a56db">⚙️ Tratamentos Aplicados</div>
+        <div id="intel-tratados"><div class="intel-empty">Carregando...</div></div>
+      </div>
+      <div class="intel-col">
+        <div class="intel-col-title" style="color:#1e7e34">✅ O que o Agente Aprendeu</div>
+        <div id="intel-aprendeu"><div class="intel-empty">Carregando...</div></div>
+      </div>
     </div>
-    <div id="anomalias-lista"></div>
-  </div>
-  <div class="busca-container">
-    <div class="busca-box">
-      <input type="text" id="buscaInput" class="busca-input" placeholder="🔍 Pergunte sobre o rebanho..." onkeydown="if(event.key==='Enter') executarBusca()" />
-      <button class="busca-btn" onclick="executarBusca()" id="buscaBtn">Buscar</button>
+    <div id="intel-limiar-info" style="margin-top:12px;padding:10px 14px;background:var(--card);border-radius:10px;display:none">
+      <div style="font-size:12px;font-weight:600;margin-bottom:6px">Limiar de Confiança</div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+        <span id="intel-limiar-val" style="font-size:16px;font-weight:700;color:var(--verde)">70%</span>
+        <div class="limiar-bar"><div class="limiar-fill" id="intel-limiar-bar" style="width:70%"></div></div>
+        <span style="color:var(--muted);font-size:11px">auto-ajustado pelo agente</span>
+      </div>
     </div>
-    <div class="busca-resposta" id="buscaResposta"></div>
   </div>
 
+  <div class="hist-table" style="margin-top:20px" id="painel-inteligencia">
+    <div class="hist-table-header" style="display:flex;align-items:center;justify-content:space-between">
+      <h2>🧠 Inteligência do Agente</h2>
+      <button onclick="carregarIntelAgente()" style="font-size:11px;padding:4px 10px;background:var(--verde);color:#fff;border:none;border-radius:8px;cursor:pointer">🔄 Atualizar</button>
+    </div>
+    <div class="intel-grid">
+      <div class="intel-col">
+        <div class="intel-col-title" style="color:#c62828">🚨 Erros Detectados</div>
+        <div id="intel-erros"><div class="intel-empty">Carregando...</div></div>
+      </div>
+      <div class="intel-col">
+        <div class="intel-col-title" style="color:#1a56db">⚙️ Tratamentos Aplicados</div>
+        <div id="intel-tratados"><div class="intel-empty">Carregando...</div></div>
+      </div>
+      <div class="intel-col">
+        <div class="intel-col-title" style="color:#1e7e34">✅ O que o Agente Aprendeu</div>
+        <div id="intel-aprendeu"><div class="intel-empty">Carregando...</div></div>
+      </div>
+    </div>
+    <div id="intel-limiar-info" style="margin-top:12px;padding:10px 14px;background:var(--card);border-radius:10px;display:none">
+      <div style="font-size:12px;font-weight:600;margin-bottom:6px">Limiar de Confiança</div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+        <span id="intel-limiar-val" style="font-size:16px;font-weight:700;color:var(--verde)">70%</span>
+        <div class="limiar-bar"><div class="limiar-fill" id="intel-limiar-bar" style="width:70%"></div></div>
+        <span style="color:var(--muted);font-size:11px">auto-ajustado pelo agente</span>
+      </div>
+    </div>
+  </div>
 <div id="alertas"></div>
   <div id="kpis" class="kpis"><div class="loading">Carregando...</div></div>
   <div id="comparacao" class="comparacao" style="display:none"></div>
@@ -264,6 +295,69 @@ function popularSelMesRef(dados) {
   })
 }
 
+
+async function carregarIntelAgente() {
+  try {
+    var [rI, rL, rF, rQ] = await Promise.all([
+      fetch(API+'/api/insights').then(function(r){return r.json()}),
+      fetch(API+'/api/logs?limite=30').then(function(r){return r.json()}),
+      fetch(API+'/api/exportar-finetuning/stats').then(function(r){return r.json()}),
+      fetch(API+'/api/qualidade').then(function(r){return r.json()}),
+    ])
+    var insights = rI.data||[], logs = rL.data||[], ft = rF.data||{}, qual = rQ.data||[]
+
+    // ERROS
+    var html = '', erros = insights.filter(function(i){return i.prioridade==='alta'||i.tipo==='erros_recentes'||i.tipo==='parse_errors'})
+    var logsErro = logs.filter(function(l){return l.erro||l.status==='erro'})
+    erros.forEach(function(e){
+      var b = e.prioridade==='alta'?'badge-critica':'badge-media'
+      var c = (e.dados&&e.dados.count)?' ('+e.dados.count+'x)':''
+      html += '<div class="intel-item intel-erro"><span class="intel-badge '+b+'">'+e.prioridade+'</span>'+e.tipo.replace(/_/g,' ')+c+'</div>'
+    })
+    if (logsErro.length) html += '<div class="intel-item intel-erro"><span class="intel-badge badge-critica">log</span>'+logsErro.length+' msgs com erro</div>'
+    if (qual[0]&&parseInt(qual[0].erros)>0) html += '<div class="intel-item intel-erro"><span class="intel-badge badge-alta">hoje</span>'+qual[0].erros+' erros | '+qual[0].pct_sucesso+'% sucesso</div>'
+    document.getElementById('intel-erros').innerHTML = html||'<div class="intel-empty">Nenhum erro detectado ✓</div>'
+
+    // TRATAMENTOS
+    html = ''
+    insights.filter(function(i){return i.tipo==='limiar_ajustado'||i.tipo==='baixa_confianca'}).forEach(function(t){
+      if (t.tipo==='limiar_ajustado'&&t.dados) {
+        html += '<div class="intel-item intel-tratado"><span class="intel-badge badge-info">auto</span>Limiar: '+t.dados.limiar_anterior+' → '+t.dados.limiar_novo+'</div>'
+        if (t.dados.motivo) html += '<div style="font-size:11px;color:var(--muted);padding:0 4px 4px">'+t.dados.motivo+'</div>'
+      } else if (t.tipo==='baixa_confianca'&&t.dados) {
+        html += '<div class="intel-item intel-tratado"><span class="intel-badge badge-info">rag</span>RAG reindexado — '+t.dados.count+' casos</div>'
+      }
+    })
+    var baixaConf = logs.filter(function(l){return l.confianca&&l.confianca<0.7}).length
+    if (baixaConf) html += '<div class="intel-item intel-tratado"><span class="intel-badge badge-info">pendente</span>'+baixaConf+' msgs aguardando ciclo</div>'
+    document.getElementById('intel-tratados').innerHTML = html||'<div class="intel-empty">Nenhum tratamento recente</div>'
+
+    // APRENDEU
+    html = ''
+    if (ft.total>0) {
+      var tipos = ft.por_tipo ? Object.entries(ft.por_tipo).map(function(kv){return kv[1]+' '+kv[0]}).join(', ') : ''
+      html += '<div class="intel-item intel-aprendeu"><span class="intel-badge badge-ok">fine-tuning</span>'+ft.total+' exemplos ('+tipos+')</div>'
+    }
+    var salvos = logs.filter(function(l){return l.status==='processado'&&l.salvo}).length
+    if (salvos) html += '<div class="intel-item intel-aprendeu"><span class="intel-badge badge-ok">sessão</span>'+salvos+' registros salvos</div>'
+    var distIns = insights.find(function(i){return i.tipo==='distribuicao_intencoes'})
+    if (distIns&&distIns.dados&&distIns.dados.distribuicao) {
+      var d = Object.entries(distIns.dados.distribuicao).map(function(kv){return kv[1]+'x '+kv[0]}).join(', ')
+      html += '<div class="intel-item intel-aprendeu"><span class="intel-badge badge-ok">padrão</span>'+d+'</div>'
+    }
+    document.getElementById('intel-aprendeu').innerHTML = html||'<div class="intel-empty">Continue confirmando com "sim"</div>'
+
+    // LIMIAR
+    var limIns = insights.find(function(i){return i.tipo==='limiar_ajustado'})
+    if (limIns&&limIns.dados) {
+      var l = limIns.dados.limiar_novo||0.7
+      document.getElementById('intel-limiar-info').style.display='block'
+      document.getElementById('intel-limiar-val').textContent=(l*100).toFixed(0)+'%'
+      document.getElementById('intel-limiar-bar').style.width=(l*100)+'%'
+    }
+  } catch(e) { console.log('intel erro:',e.message) }
+}
+
 async function carregar() {
   const lim = document.getElementById('selMeses').value
   try {
@@ -286,7 +380,7 @@ async function carregar() {
     renderTabelaCat(dadosGlobais[0])
     renderHistorico(dadosGlobais)
     atualizarEstilos()
-    carregarAnomalias(false).catch(function(){})
+    carregarIntelAgente().catch(function(){})
     try { var rMov = await fetch(API + '/api/movimentacoes?limite=50'); var jMov = await rMov.json(); renderMovimentacoes(jMov.data || []) } catch(_) {}
     document.getElementById('ultima-att').textContent = `Atualizado: ${new Date().toLocaleTimeString('pt-BR')}`
   } catch(e) {
@@ -659,75 +753,6 @@ async function exportarFinetuning() {
   } catch(e) { alert('Erro: '+e.message); btn.disabled=false; btn.textContent='⬇️ Exportar JSONL' }
 }
 
-async function executarBusca() {
-  var input = document.getElementById('buscaInput')
-  var btn = document.getElementById('buscaBtn')
-  var respDiv = document.getElementById('buscaResposta')
-  var query = input.value.trim()
-  if (!query) return
-  btn.disabled = true
-  btn.textContent = '⏳ Buscando...'
-  respDiv.className = 'busca-resposta visivel'
-  respDiv.innerHTML = '<em style="color:var(--muted)">Analisando com IA...</em>'
-  try {
-    var r = await fetch(API + '/api/busca', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ query }) })
-    var j = await r.json()
-    if (!j.ok) throw new Error(j.error)
-    var html = '<strong>🤖 Resposta:</strong><br><br>' + j.resposta.replace(/\n/g, '<br>')
-    if (j.exemplos_similares && j.exemplos_similares.length > 0) {
-      html += '<div class="busca-similares"><br><strong>Registros similares:</strong><br>'
-      html += j.exemplos_similares.map(function(e) { return '• ' + e.transcricao.substring(0,80) + (e.similaridade ? ' <span style="color:var(--verde)">(' + (e.similaridade*100).toFixed(0) + '% similar)</span>' : '') }).join('<br>')
-      html += '</div>'
-    }
-    respDiv.innerHTML = html
-  } catch(e) {
-    respDiv.innerHTML = '<span style="color:#c62828">Erro: ' + e.message + '</span>'
-  } finally {
-    btn.disabled = false
-    btn.textContent = 'Buscar'
-  }
-}
-
-
-async function executarBusca() {
-  var input = document.getElementById('buscaInput')
-  var btn = document.getElementById('buscaBtn')
-  var respDiv = document.getElementById('buscaResposta')
-  var query = input.value.trim()
-  if (!query) return
-  btn.disabled = true; btn.textContent = '⏳ Buscando...'
-  respDiv.className = 'busca-resposta visivel'
-  respDiv.innerHTML = '<em style="color:var(--muted)">Analisando com IA...</em>'
-  try {
-    var r = await fetch(API + '/api/busca', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ query }) })
-    var j = await r.json()
-    if (!j.ok) throw new Error(j.error)
-    respDiv.innerHTML = '<strong>🤖 Resposta:</strong><br><br>' + j.resposta.replace(/\n/g, '<br>')
-  } catch(e) { respDiv.innerHTML = '<span style="color:#c62828">Erro: ' + e.message + '</span>' }
-  finally { btn.disabled = false; btn.textContent = 'Buscar' }
-}
-
-async function carregarAnomalias(forcar) {
-  try {
-    var r = await fetch(API + '/api/anomalias' + (forcar ? '?forcar=true' : ''))
-    var j = await r.json()
-    var lista = j.data || []
-    var section = document.getElementById('anomalias-section')
-    var el = document.getElementById('anomalias-lista')
-    if (!lista.length) { section.style.display = 'none'; return }
-    section.style.display = 'block'
-    var ICONS = { critica:'🚨', alta:'⚠️', media:'⚡', baixa:'ℹ️' }
-    el.innerHTML = lista.map(function(a) {
-      return '<div class="anom-card anom-' + a.severidade + '"><span class="anom-icon">' + (ICONS[a.severidade]||'⚠️') + '</span><div class="anom-msg"><span class="anom-badge badge-' + a.severidade + '">' + a.severidade + '</span>' + a.mensagem + '</div></div>'
-    }).join('')
-  } catch(e) { console.log('Anomalias:', e.message) }
-}
-
-async function reanalizar() {
-  document.getElementById('anomalias-lista').innerHTML = '<em style="color:var(--muted);font-size:13px">Analisando...</em>'
-  document.getElementById('anomalias-section').style.display = 'block'
-  await carregarAnomalias(true)
-}
 
 function renderMovimentacoes(dados) {
   var el = document.getElementById('movimentacoes')
