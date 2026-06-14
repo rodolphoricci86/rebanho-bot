@@ -72,7 +72,6 @@ function gerarPergunta(etapa, dados) {
     if (dados.dia && dados.mes && dados.ano) {
       return gerarPerguntaEtapa(dados, 'existencia')
     }
-    var meses=['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
     if (dados.mes && dados.ano && !dados.dia) {
       return `_Identifiquei ${meses[dados.mes]} de ${dados.ano}, mas preciso do dia._\n\n📅 *Qual o dia deste mapa?*\nEx: *02* ou *dia 2*`
     }
