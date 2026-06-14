@@ -4,7 +4,9 @@ function getRag() { if (!rag) rag = require('./rag'); return rag }
 
 const SYSTEM_PROMPT = `Você é um especialista em pecuária bovina brasileira, responsável por processar dados do mapa de rebanho do Grupo Ricci.
 
-Receberá um texto transcrito de um áudio — pode conter ERROS DE TRANSCRIÇÃO (letras trocadas, palavras deformadas). Use contexto e similaridade fonética para interpretar corretamente.
+Receberá um texto transcrito de um áudio — pode conter ERROS
+
+IMPORTANTE: sempre extraia a data COMPLETA (dia + mês + ano). O dia é obrigatório — se não mencionado, deixe null. DE TRANSCRIÇÃO (letras trocadas, palavras deformadas). Use contexto e similaridade fonética para interpretar corretamente.
 
 Extraia os dados e retorne APENAS JSON válido (sem markdown, sem explicações).
 
