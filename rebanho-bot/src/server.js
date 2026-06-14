@@ -461,9 +461,10 @@ async function processarTexto(de, texto, logId) {
     ultimaClassificacao[de] = { intencao: rota.intencao, transcricao: texto }
     atualizarLog(logId, { intencao_detectada: rota.intencao, confianca: rota.confianca, status: 'processando', modelo_usado: 'gpt-4o-mini' }).catch(() => {})
 
-    // APRENDIZADO ATIVO
+    // APRENDIZADO ATIVO — limiar dinâmico da tabela configuracoes
     var confiancaRota = rota.confianca || 1
-    if (confiancaRota < 0.7) {
+    var limiarConfianca = parseFloat(process.env.CFG_LIMIAR_CONFIANCA || '0.7')
+    if (confiancaRota < limiarConfianca) {
       var LABELS = { mapa:'fechamento mensal', movimentacao:'movimentação pontual', consulta:'consulta', cadastro:'cadastro' }
       // Pré-extrair para não reextrair após confirmação
       var dadosPre = null
