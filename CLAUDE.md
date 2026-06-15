@@ -196,6 +196,86 @@ confiança ≥ limiar?
 
 ---
 
+## Decisões arquiteturais registradas em sessão
+
+### [2026-06-15] Fluxo guiado de registro com menu de movimentação
+
+**Percepção captada (usuários na ponta)**
+Peões têm dificuldade em fazer o agente entender as categorias de movimentação. O fluxo livre por áudio gera confusão e erros de extração porque o operador não sabe o que informar nem em qual ordem.
+
+**Diagnóstico técnico**
+O fluxo atual começa com áudio livre → agentRoteador tenta inferir intenção → agentExtração tenta capturar tudo de uma vez. Quando o áudio é ambíguo ou incompleto, o agente erra a categoria ou pede complemento de forma pouco clara. O operador não tem cadência — não sabe o que o bot espera em cada momento.
+
+**Roteiro validado pelo arquiteto**
+```
+1. Usuário: qualquer saudação
+2. Bot: menu fixo → "O que deseja registrar?"
+        [1] Nascimentos  [2] Mortes  [3] Compras  [4] Vendas  [5] Fechamento mensal
+3. Usuário: digita o número ou toca no botão
+4. Bot: "Qual Fazenda/Retiro e data da movimentação?"
+5. Usuário: áudio com local e data
+6. Bot: "Agora informe as quantidades por categoria"
+7. Usuário: áudio com categorias e quantidades
+8. Bot: confirmação detalhada por categoria (destaca categorias com valor = 0)
+9. Usuário: confirma ou corrige
+10. Bot: "Registrado com sucesso ✅"
+```
+
+**Camadas afetadas**
+| Arquivo | O que muda |
+|---|---|
+| `server.js` | Adicionar etapa `menu_inicial` antes de qualquer processamento. Detectar saudação → responder com menu numerado. Adicionar etapas `local_data` e `categorias` ao fluxo de sessão. |
+| `server.js` | Função `gerarPergunta()` recebe duas novas etapas: `local_data` e `categorias`. |
+| `server.js` | Função `setSessao()` passa a armazenar `tipo_movimentacao` escolhido no menu. |
+| `extracao.js` | `extrairMovimentacaoMultipla()` recebe o `tipo_movimentacao` como contexto fixo — não precisa mais inferir do áudio, só extrair quantidades. |
+| `server.js` | Confirmação final deve listar TODAS as categorias da movimentação escolhida, marcando com `⚠️` as que ficaram com valor 0. |
+
+**O que os programadores devem implementar**
+
+1. **Detecção de saudação** (`server.js`, webhook POST, bloco sem sessão ativa)
+   - Se a mensagem não tiver mídia e o texto for uma saudação (`oi`, `olá`, `bom dia`, `boa tarde`, `boa noite`, `boa`, `oi tudo`, `e ai`, ou qualquer texto curto ≤ 15 chars sem número), responder com o menu e criar sessão na etapa `menu_inicial`.
+
+2. **Menu numerado** — resposta em texto WhatsApp formatado:
+   ```
+   Olá! 👋 O que deseja registrar hoje?
+   
+   1️⃣ Nascimentos
+   2️⃣ Mortes
+   3️⃣ Compras
+   4️⃣ Vendas
+   5️⃣ Fechamento mensal
+   
+   Responda com o número da opção.
+   ```
+
+3. **Etapa `menu_inicial`** (`server.js`)
+   - Recebe número 1–5 → mapeia para `tipo_movimentacao` (`nascimento | morte | compra | venda | mapa`)
+   - Avança sessão para etapa `local_data`
+   - Responde: *"Qual Fazenda/Retiro e a data em que ocorreu?"*
+
+4. **Etapa `local_data`** (`server.js`)
+   - Aceita texto ou áudio
+   - Extrai fazenda/lote e data via GPT (reutilizar prompt de extração existente, passando `tipo_movimentacao` no contexto)
+   - Avança para etapa `categorias`
+   - Responde: *"Agora me informe as quantidades por categoria. Pode enviar um áudio."*
+
+5. **Etapa `categorias`** (`server.js` + `extracao.js`)
+   - Aceita texto ou áudio
+   - Chama `extrairMovimentacaoMultipla()` passando `tipo_movimentacao` como contexto fixo no system prompt — o agente não precisa mais adivinhar o tipo
+   - Avança para etapa `confirmacao`
+
+6. **Confirmação enriquecida** (`server.js`, função `gerarResumoConfirmacao`)
+   - Listar todas as categorias relevantes para o `tipo_movimentacao`
+   - Marcar com `⚠️ 0` as que não foram informadas
+   - Manter o padrão atual de *sim/não*
+
+**Impacto esperado**
+- Elimina erros de roteamento do `agentRoteador` para movimentações (tipo já vem fixo do menu)
+- Reduz tokens e latência: GPT não precisa inferir tipo, só extrair quantidades
+- Operador tem cadência clara — sabe exatamente o que o bot espera em cada etapa
+
+---
+
 ## Pendências abertas
 
 ### Alta prioridade
