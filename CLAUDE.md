@@ -276,6 +276,77 @@ O fluxo atual começa com áudio livre → agentRoteador tenta inferir intençã
 
 ---
 
+### [2026-06-15] Peso obrigatório para movimentações de curral
+
+**Percepção captada (usuários na ponta)**
+Movimentações que ocorrem no curral — compra, venda e troca de categoria — exigem obrigatoriamente o registro do peso do lote. Hoje o campo `peso` existe no banco mas não é cobrado do operador em nenhuma etapa do fluxo.
+
+**Diagnóstico técnico**
+O campo `peso` já existe na tabela `movimentacoes_lote` e no objeto extraído pelo GPT (`peso_total`, `peso_medio` em `extracao.js`). Porém:
+- Não há validação de obrigatoriedade por tipo de movimentação
+- O fluxo de sessão não tem etapa dedicada para captura de peso
+- A confirmação final não alerta quando peso está ausente para esses tipos
+
+**Tipos de movimentação que exigem peso obrigatório**
+| Tipo interno | Label exibido |
+|---|---|
+| `entrada_compra` | Compra |
+| `saida_venda` | Venda |
+| `mudanca_categoria` | Troca de categoria |
+
+> Nascimentos, mortes e transferências de pasto **não** exigem peso.
+
+**Camadas afetadas**
+| Arquivo | O que muda |
+|---|---|
+| `server.js` | Após etapa `categorias`, verificar se `tipo_movimentacao` exige peso. Se sim, adicionar etapa `peso_lote` antes de avançar para `confirmacao`. |
+| `server.js` | Nova etapa `peso_lote`: bot pergunta peso total e/ou peso médio. Aceita áudio ou texto. |
+| `extracao.js` | Criar função `extrairPeso(texto)` — extrai `peso_total` (kg), `peso_medio` (kg/cabeça) e `unidade` (kg ou arroba). Converter arrobas para kg automaticamente (1 arroba = 15 kg). |
+| `server.js` | Na confirmação final, se `tipo_movimentacao` exige peso e `peso` estiver null → bloquear salvamento com `⚠️ Peso obrigatório para este tipo de movimentação.` |
+| `server.js` | Função `gerarResumoConfirmacao()` deve exibir peso total e peso médio quando presentes. |
+
+**O que os programadores devem implementar**
+
+1. **Constante de tipos que exigem peso** (`server.js`)
+   ```js
+   const TIPOS_EXIGEM_PESO = ['entrada_compra', 'saida_venda', 'mudanca_categoria']
+   ```
+
+2. **Etapa `peso_lote`** (`server.js`)
+   - Inserir no fluxo após `categorias`, antes de `confirmacao`
+   - Só ativada se `TIPOS_EXIGEM_PESO.includes(tipo_movimentacao)`
+   - Mensagem ao operador:
+     ```
+     ⚖️ Informe o peso do lote.
+     Exemplo: "450 arrobas" ou "6.750 kg" ou "peso médio 15 arrobas por cabeça"
+     ```
+   - Aceita áudio ou texto
+   - Chama `extrairPeso(texto)` → salva `peso_total_kg` e `peso_medio_kg` na sessão
+
+3. **Função `extrairPeso(texto)`** (`extracao.js`)
+   - Prompt GPT focado exclusivamente em extrair peso
+   - Retorna: `{ peso_total_kg, peso_medio_kg, unidade_original }`
+   - Conversão automática: arrobas × 15 = kg
+   - Se não identificar → retorna `null` (bot repergunta)
+
+4. **Bloqueio na confirmação** (`server.js`)
+   - Se `TIPOS_EXIGEM_PESO.includes(tipo)` e `peso_total_kg` é null → não avançar para salvamento
+   - Responder: `⚠️ Peso obrigatório para Compra/Venda/Troca de categoria. Informe o peso para continuar.`
+   - Voltar para etapa `peso_lote`
+
+5. **Exibição na confirmação** (`server.js`, `gerarResumoConfirmacao`)
+   - Adicionar linha:
+     ```
+     ⚖️ Peso total: 6.750 kg | Peso médio: 15 kg/cabeça
+     ```
+
+**Impacto esperado**
+- Garante integridade do dado de peso para movimentações financeiras (compra/venda)
+- Operador não consegue finalizar sem informar o peso — dado crítico para precificação
+- Conversão automática de arrobas elimina erro de unidade
+
+---
+
 ## Pendências abertas
 
 ### Alta prioridade
