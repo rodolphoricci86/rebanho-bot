@@ -445,4 +445,30 @@ async function salvarExemploConfirmado(tipo, transcricao, saidaJson, fazenda) {
   } catch(e) { console.log('Erro exemplo:', e.message) }
 }
 
-module.exports = { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, detectarTipoRegistro, agentRoteador, agentConsulta, salvarExemploConfirmado, gerarResumoWhatsApp }
+// ─── Extrair peso do lote (compra, venda, troca de categoria) ────────────────
+async function extrairPeso(texto) {
+  try {
+    const prompt = `Extraia informações de peso do texto abaixo e retorne APENAS JSON válido.
+Converta arrobas para kg automaticamente (1 arroba = 15 kg).
+Exemplos:
+- "450 arrobas" → { "peso_total_kg": 6750, "peso_medio_kg": null, "unidade_original": "arrobas" }
+- "6750 kg" → { "peso_total_kg": 6750, "peso_medio_kg": null, "unidade_original": "kg" }
+- "peso médio 15 arrobas por cabeça" → { "peso_total_kg": null, "peso_medio_kg": 225, "unidade_original": "arrobas" }
+- "450 arrobas, média de 15 por cabeça" → { "peso_total_kg": 6750, "peso_medio_kg": 225, "unidade_original": "arrobas" }
+Se não encontrar peso, retorne: { "peso_total_kg": null, "peso_medio_kg": null, "unidade_original": null }
+
+Texto: "${texto}"`
+    const response = await chamarGroq([{ role: 'user', content: prompt }], 200)
+    const resultado = JSON.parse(response)
+    return {
+      peso_total_kg: resultado.peso_total_kg || null,
+      peso_medio_kg: resultado.peso_medio_kg || null,
+      unidade_original: resultado.unidade_original || null,
+    }
+  } catch(e) {
+    console.log('[extrairPeso] erro:', e.message)
+    return { peso_total_kg: null, peso_medio_kg: null, unidade_original: null }
+  }
+}
+
+module.exports = { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, extrairMovimentacaoMultipla, detectarTipoRegistro, agentRoteador, agentConsulta, salvarExemploConfirmado, gerarResumoWhatsApp, extrairPeso }

@@ -200,6 +200,8 @@ confiança ≥ limiar?
 
 ### [2026-06-15] Fluxo guiado de registro com menu de movimentação
 
+**Status: ✅ IMPLEMENTADO — commit no branch main**
+
 **Percepção captada (usuários na ponta)**
 Peões têm dificuldade em fazer o agente entender as categorias de movimentação. O fluxo livre por áudio gera confusão e erros de extração porque o operador não sabe o que informar nem em qual ordem.
 
@@ -277,6 +279,8 @@ O fluxo atual começa com áudio livre → agentRoteador tenta inferir intençã
 ---
 
 ### [2026-06-15] Peso obrigatório para movimentações de curral
+
+**Status: ✅ IMPLEMENTADO — commit no branch main**
 
 **Percepção captada (usuários na ponta)**
 Movimentações que ocorrem no curral — compra, venda e troca de categoria — exigem obrigatoriamente o registro do peso do lote. Hoje o campo `peso` existe no banco mas não é cobrado do operador em nenhuma etapa do fluxo.

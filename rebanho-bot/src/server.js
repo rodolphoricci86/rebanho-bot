@@ -6,7 +6,31 @@ const twilio = require('twilio')
 const path = require('path')
 const { createClient } = require('@supabase/supabase-js')
 const { transcreverAudio } = require('./transcricao')
-const { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, extrairMovimentacaoMultipla, detectarTipoRegistro, agentRoteador, agentConsulta, salvarExemploConfirmado, gerarResumoWhatsApp } = require('./extracao')
+const { extrairDadosRebanho, extrairComplemento, extrairMovimentacao, extrairMovimentacaoMultipla, detectarTipoRegistro, agentRoteador, agentConsulta, salvarExemploConfirmado, gerarResumoWhatsApp, extrairPeso } = require('./extracao')
+
+// Tipos de movimentação de curral que exigem peso obrigatório
+const TIPOS_EXIGEM_PESO = ['entrada_compra', 'saida_venda', 'mudanca_categoria']
+
+// Mapeamento de label do menu para tipo interno
+const MENU_TIPO_MAP = {
+  '1': { tipo: 'nascimento', label: 'Nascimentos', interno: 'entrada_nascimento' },
+  '2': { tipo: 'morte',      label: 'Mortes',      interno: 'saida_morte' },
+  '3': { tipo: 'compra',     label: 'Compras',     interno: 'entrada_compra' },
+  '4': { tipo: 'venda',      label: 'Vendas',      interno: 'saida_venda' },
+  '5': { tipo: 'troca',      label: 'Troca de categoria', interno: 'mudanca_categoria' },
+  '6': { tipo: 'mapa',       label: 'Fechamento mensal',  interno: 'mapa' },
+}
+
+// Categorias relevantes por tipo de movimentação
+const CATEGORIAS_POR_TIPO = {
+  nascimento: ['1.1 Bezerros 0-8m', '2.1 Bezerras 0-2m'],
+  morte:      ['1.1 Bezerros 0-8m','1.3 Garrotes 13-24m','1.5 Bois 25-36m','1.7 Touros PO',
+               '2.1 Bezerras 0-2m','2.4 Novilhas 13-24m','2.7 Vacas paridas','2.6 Vacas solteiras'],
+  compra:     ['1.3 Garrotes 13-24m','1.5 Bois 25-36m','2.4 Novilhas 13-24m','2.7 Vacas paridas'],
+  venda:      ['1.3 Garrotes 13-24m','1.5 Bois 25-36m','2.6 Vacas solteiras','1.7 Touros PO'],
+  troca:      ['1.2 Bezerros 8-12m','1.3 Garrotes 13-24m','2.3 Bezerras 9-12m','2.4 Novilhas 13-24m'],
+  mapa:       ['1.1','1.2','1.3','1.4','1.5','1.6','1.7','2.1','2.2','2.3','2.4','2.5','2.6','2.7','2.8'],
+}
 let _rag = null
 function getRag() { if (!_rag) _rag = require('./rag'); return _rag }
 const { salvarRebanho, buscarResumoMensal, buscarResumoPorLote } = require('./supabase')
@@ -28,7 +52,8 @@ const supabase = createClient(
 
 // ─── Sessões multi-etapa ──────────────────────────────────────────────────────
 // Estrutura: { dados, etapa, ts }
-// Etapas: 'periodo' | 'lote' | 'movimentacoes' | 'confirmacao'
+// Etapas legadas (mapa livre): 'periodo' | 'existencia' | 'movimentacoes' | 'confirmacao'
+// Etapas fluxo guiado:        'menu_inicial' | 'local_data' | 'categorias' | 'peso_lote' | 'confirmacao_guiada'
 const sessoes = {}
 const TTL = 15 * 60 * 1000
 
@@ -38,6 +63,226 @@ function setSessao(de, dados, etapa) {
 }
 
 function limparSessao(de) { delete sessoes[de] }
+
+// ─── Detecção de saudação ─────────────────────────────────────────────────────
+function eSaudacao(texto) {
+  if (!texto) return false
+  const t = texto.trim().toLowerCase()
+  if (t.length > 30) return false
+  const saudacoes = ['oi','olá','ola','bom dia','boa tarde','boa noite','boa','e aí','e ai',
+    'eai','hey','hello','hi','tudo bem','tudo bom','opa','salve','fala','alô','alo']
+  return saudacoes.some(s => t === s || t.startsWith(s + ' ') || t.startsWith(s + ','))
+}
+
+// ─── Fluxo guiado: enviar menu inicial ───────────────────────────────────────
+async function enviarMenuInicial(de, usuario) {
+  const nome = usuario && usuario.nome ? ', ' + usuario.nome.split(' ')[0] : ''
+  setSessao(de, { _guiado: true }, 'menu_inicial')
+  await enviarMensagem(de,
+    'Olá' + nome + '! 👋 O que deseja registrar hoje?\n\n' +
+    '1️⃣  Nascimentos\n' +
+    '2️⃣  Mortes\n' +
+    '3️⃣  Compras\n' +
+    '4️⃣  Vendas\n' +
+    '5️⃣  Troca de categoria\n' +
+    '6️⃣  Fechamento mensal\n\n' +
+    '_Responda com o número da opção._'
+  )
+}
+
+// ─── Fluxo guiado: processar cada etapa ──────────────────────────────────────
+async function processarFluxoGuiado(de, texto, dados, etapa) {
+  const resposta = (texto || '').trim()
+  const respostaLower = resposta.toLowerCase()
+
+  if (etapa === 'menu_inicial') {
+    const opcao = MENU_TIPO_MAP[resposta]
+    if (!opcao) {
+      await enviarMensagem(de, '_Por favor, responda com o número da opção (1 a 6)._')
+      return
+    }
+    const novosDados = { _guiado: true, tipo_guiado: opcao.tipo, tipo_interno: opcao.interno, label_tipo: opcao.label }
+    setSessao(de, novosDados, 'local_data')
+    await enviarMensagem(de,
+      '📍 *' + opcao.label + '* selecionado.\n\n' +
+      'Em qual *fazenda/retiro* ocorreu e qual a *data*?\n\n' +
+      '_Pode enviar um áudio ou digitar. Ex: Retiro Aliança, dia 10 de junho de 2026_'
+    )
+    return
+  }
+
+  if (etapa === 'local_data') {
+    await enviarMensagem(de, '_Processando local e data..._')
+    try {
+      const extraido = await extrairDadosRebanho(resposta)
+      const novosDados = Object.assign({}, dados, {
+        fazenda: extraido.fazenda || dados.fazenda || 'Grupo Ricci',
+        lote_nome: extraido.lote_nome || null,
+        dia: extraido.dia || null,
+        mes: extraido.mes || null,
+        ano: extraido.ano || null,
+        _transcricaoLocalData: resposta,
+      })
+      const cats = CATEGORIAS_POR_TIPO[dados.tipo_guiado] || []
+      const listaCats = cats.map(function(c) { return '• ' + c }).join('\n')
+      setSessao(de, novosDados, 'categorias')
+      await enviarMensagem(de,
+        '✅ Registrado!\n\n' +
+        'Agora informe as *quantidades por categoria* para *' + dados.label_tipo + '*:\n\n' + listaCats + '\n\n' +
+        '_Pode enviar um áudio com os números por categoria._'
+      )
+    } catch(e) {
+      await enviarMensagem(de, '_Não consegui identificar o local e a data. Pode repetir? Ex: Retiro Aliança, dia 10 de junho de 2026_')
+    }
+    return
+  }
+
+  if (etapa === 'categorias') {
+    await enviarMensagem(de, '_Processando categorias..._')
+    try {
+      var movs = []
+      if (dados.tipo_guiado === 'mapa') {
+        var extraido2 = await extrairDadosRebanho(resposta)
+        movs = extraido2.categorias || []
+      } else {
+        movs = await extrairMovimentacaoMultipla(resposta + ' (tipo: ' + dados.label_tipo + ')')
+      }
+      const novosDados2 = Object.assign({}, dados, { _movimentacoesGuiadas: movs, _transcricaoCategorias: resposta })
+      if (TIPOS_EXIGEM_PESO.includes(dados.tipo_interno)) {
+        setSessao(de, novosDados2, 'peso_lote')
+        await enviarMensagem(de,
+          '⚖️ Esta movimentação exige o *peso do lote*.\n\n' +
+          'Informe o peso total ou médio:\n\n' +
+          '_Ex: "450 arrobas" · "6.750 kg" · "peso médio 15 arrobas por cabeça"_'
+        )
+      } else {
+        setSessao(de, novosDados2, 'confirmacao_guiada')
+        await enviarMensagem(de, gerarResumoGuiado(novosDados2))
+      }
+    } catch(e) {
+      await enviarMensagem(de, '_Erro ao processar categorias. Pode repetir com as quantidades?_')
+    }
+    return
+  }
+
+  if (etapa === 'peso_lote') {
+    await enviarMensagem(de, '_Processando peso..._')
+    const pesoExtraido = await extrairPeso(resposta)
+    if (!pesoExtraido.peso_total_kg && !pesoExtraido.peso_medio_kg) {
+      await enviarMensagem(de,
+        '⚠️ Não identifiquei o peso. *Peso obrigatório* para ' + dados.label_tipo + '.\n\n' +
+        'Tente novamente. Ex: _"450 arrobas"_, _"6.750 kg"_ ou _"15 arrobas por cabeça"_'
+      )
+      return
+    }
+    const novosDados3 = Object.assign({}, dados, {
+      peso_total_kg: pesoExtraido.peso_total_kg,
+      peso_medio_kg: pesoExtraido.peso_medio_kg,
+      peso_unidade: pesoExtraido.unidade_original
+    })
+    setSessao(de, novosDados3, 'confirmacao_guiada')
+    await enviarMensagem(de, gerarResumoGuiado(novosDados3))
+    return
+  }
+
+  if (etapa === 'confirmacao_guiada') {
+    if (['sim','s','yes','ok','confirmo','correto','pode salvar','salvar'].includes(respostaLower)) {
+      limparSessao(de)
+      await enviarMensagem(de, '_Salvando..._')
+      await salvarFluxoGuiado(de, dados)
+      return
+    }
+    if (['não','nao','n','errado','cancela','cancelar'].includes(respostaLower)) {
+      limparSessao(de)
+      await enviarMensagem(de, '_Ok, operação cancelada. Envie uma nova mensagem para recomeçar._')
+      return
+    }
+    if (resposta.length > 5) {
+      await enviarMensagem(de, '_Aplicando correção..._')
+      const correcao = await extrairMovimentacaoMultipla(resposta + ' (tipo: ' + dados.label_tipo + ')')
+      const dadosCorrigidos = Object.assign({}, dados, { _movimentacoesGuiadas: correcao })
+      setSessao(de, dadosCorrigidos, 'confirmacao_guiada')
+      await enviarMensagem(de, gerarResumoGuiado(dadosCorrigidos))
+      return
+    }
+    await enviarMensagem(de, '_Responda *sim* para salvar ou *não* para cancelar._')
+    return
+  }
+}
+
+// ─── Resumo de confirmação para o fluxo guiado ───────────────────────────────
+function gerarResumoGuiado(dados) {
+  const meses = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+    'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+  const periodo = dados.mes ? (dados.dia ? dados.dia + '/' : '') + meses[dados.mes] + '/' + dados.ano : '—'
+  const movs = dados._movimentacoesGuiadas || []
+  const cats = CATEGORIAS_POR_TIPO[dados.tipo_guiado] || []
+
+  var linhas = ''
+  if (dados.tipo_guiado === 'mapa') {
+    linhas = movs.filter(function(c) { return c.existencia_atual > 0 })
+      .map(function(c) { return '  • ' + c.item + ' ' + c.discriminacao + ': ' + c.existencia_atual }).join('\n')
+    const zeros = movs.filter(function(c) { return !c.existencia_atual || c.existencia_atual === 0 })
+    if (zeros.length) linhas += '\n\n⚠️ *Sem registro (= 0):*\n' + zeros.map(function(z) { return '  • ' + z.item + ' ' + z.discriminacao }).join('\n')
+  } else {
+    linhas = movs.map(function(m) {
+      return '  • ' + (m.categoria || m.categoria_item || '—') + ': ' + (m.quantidade || 0)
+    }).join('\n') || '  (nenhuma quantidade identificada)'
+    const categoriasInformadas = movs.map(function(m) { return (m.categoria || '').toLowerCase() })
+    const zeros = cats.filter(function(c) {
+      return !categoriasInformadas.some(function(ci) { return c.toLowerCase().includes(ci.split(' ')[0].toLowerCase()) })
+    })
+    if (zeros.length) linhas += '\n\n⚠️ *Não informado (= 0):*\n' + zeros.map(function(z) { return '  • ' + z }).join('\n')
+  }
+
+  const pesoLine = dados.peso_total_kg
+    ? '\n⚖️ *Peso total:* ' + dados.peso_total_kg.toLocaleString('pt-BR') + ' kg' +
+      (dados.peso_medio_kg ? ' | *Médio:* ' + dados.peso_medio_kg + ' kg/cab' : '')
+    : ''
+
+  return '📋 *Confira antes de salvar:*\n\n' +
+    '📌 *Tipo:* ' + dados.label_tipo + '\n' +
+    '📍 *Local:* ' + (dados.fazenda || 'Grupo Ricci') + (dados.lote_nome ? ' — ' + dados.lote_nome : '') + '\n' +
+    '📅 *Data:* ' + periodo +
+    pesoLine + '\n\n*Por categoria:*\n' + (linhas || '  —') + '\n\n' +
+    'Está correto? Responda *sim* para salvar ou *não* para cancelar.'
+}
+
+// ─── Salvar dados do fluxo guiado ────────────────────────────────────────────
+async function salvarFluxoGuiado(de, dados) {
+  try {
+    if (dados.tipo_guiado === 'mapa') {
+      const dadosMapa = Object.assign({}, dados, { categorias: dados._movimentacoesGuiadas || [] })
+      await finalizarSalvamento(de, dadosMapa)
+      return
+    }
+    const movs = dados._movimentacoesGuiadas || []
+    if (movs.length === 0) {
+      await enviarMensagem(de, '⚠️ Nenhuma movimentação identificada para salvar.')
+      return
+    }
+    for (var i = 0; i < movs.length; i++) {
+      const mov = movs[i]
+      const movCompleto = Object.assign({}, mov, {
+        tipo: dados.tipo_interno,
+        fazenda: dados.fazenda || 'Grupo Ricci',
+        dia: mov.dia || dados.dia,
+        mes: mov.mes || dados.mes,
+        ano: mov.ano || dados.ano,
+        peso: dados.peso_total_kg || mov.peso || null,
+      })
+      await salvarEResponderMovimentacao(de, movCompleto)
+    }
+    await enviarMensagem(de,
+      '✅ *' + dados.label_tipo + ' registrada com sucesso!*\n\n' +
+      '_Envie uma nova mensagem para registrar outra movimentação._'
+    )
+    comprimirMemoriaUsuario(de).catch(function() {})
+  } catch(e) {
+    await enviarMensagem(de, 'Erro ao salvar: ' + e.message)
+  }
+}
+
 
 // ─── Análise do que está faltando ─────────────────────────────────────────────
 function analisarFaltando(dados) {
@@ -173,6 +418,24 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
 
       const resposta = (corpo || '').trim().toLowerCase()
 
+      // ── FLUXO GUIADO: roteamento para etapas do novo fluxo ──
+      if (dados._guiado || etapa === 'menu_inicial' || etapa === 'local_data' ||
+          etapa === 'categorias' || etapa === 'peso_lote' || etapa === 'confirmacao_guiada') {
+        if (temAudio) {
+          responderWhatsApp(res, '_Ouvindo seu áudio..._')
+          transcreverAudio(mediaUrl, process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+            .then(function(txt) { return processarFluxoGuiado(de, txt, dados, etapa) })
+            .catch(function(err) { enviarMensagem(de, 'Erro: ' + err.message) })
+          return
+        }
+        responderWhatsApp(res, '_Processando..._')
+        processarFluxoGuiado(de, corpo, dados, etapa).catch(function(err) {
+          enviarMensagem(de, 'Erro: ' + err.message)
+        })
+        return
+      }
+
+
       // CONFIRMAÇÃO
       if (etapa === 'confirmacao') {
         if (resposta === 'sim' || resposta === 's' || resposta === 'yes') {
@@ -242,6 +505,23 @@ app.post('/webhook/whatsapp', validarTwilio, async (req, res) => {
         enviarMensagem(de, `Erro: ${err.message}`))
       return
     }
+
+    // ── Saudação: iniciar fluxo guiado ──
+    if (eSaudacao(corpo)) {
+      const usuarioSauda = await obterOuCriarUsuario(de)
+      if (!usuarioSauda.nome) {
+        responderWhatsApp(res,
+          '*Olá! Sou o assistente de rebanho do Grupo Ricci.* 🐄\n\nVou te conhecer melhor em algumas perguntas rápidas — mas você já pode enviar áudios com dados do rebanho a qualquer momento!')
+        perguntarProximoCadastro(de)
+        return
+      }
+      responderWhatsApp(res, '_Abrindo menu..._')
+      enviarMenuInicial(de, usuarioSauda).catch(function(err) {
+        enviarMensagem(de, 'Erro: ' + err.message)
+      })
+      return
+    }
+
 
     // ── Comandos ──
     const correcao = detectarCorrecao(corpo)
