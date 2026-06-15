@@ -215,6 +215,24 @@ confiança ≥ limiar?
 
 ---
 
+## Contexto de trabalho colaborativo
+
+### Papel do Rodolpho Ricci
+Arquiteto de Soluções — capta percepções dos usuários na ponta (peões de campo), traduz as dificuldades para a equipe técnica e retorna à ponta para implementar as melhorias validadas.
+
+### Padrão de comunicação entre arquiteto e programadores
+Toda decisão, percepção ou melhoria registrada nas sessões com Claude segue obrigatoriamente este formato:
+
+- **Percepção captada** — o que o usuário/peão sentiu ou relatou
+- **Diagnóstico** — o problema traduzido em termos técnicos
+- **Camadas afetadas** — quais arquivos e tabelas precisam ser tocados
+- **O que os programadores devem fazer** — instrução clara e direta
+
+### Registro de sessões
+Todas as conclusões e decisões arquiteturais são commitadas neste arquivo (`CLAUDE.md`) ao final de cada sessão ou quando uma decisão relevante for tomada.
+
+---
+
 ## Como trabalhar neste projeto
 
 1. **Antes de qualquer mudança** — buscar o arquivo atual do GitHub via `urllib.request`
